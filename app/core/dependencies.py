@@ -31,7 +31,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             )
 
         user_id = payload.get("sub")
-        logger.info(f"🔍 DEBUG: Extracted user_id from token: {user_id}")
+        logger.info(f"🔍 DEBUG: Extracted user_id from token: '{user_id}'")
+        logger.info(f"🔍 DEBUG: Full token payload: {payload}")
         if user_id is None:
             logger.error("Token payload is missing 'sub' (subject) claim.")
             raise HTTPException(

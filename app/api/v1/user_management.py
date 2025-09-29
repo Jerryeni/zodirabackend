@@ -539,7 +539,11 @@ async def create_user(user_id: str, user: User, current_user: str = Depends(get_
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(user_id: str, current_user: str = Depends(get_current_user)):
+    logger.info(f"🔍 DEBUG: Profile endpoint - JWT user_id: '{current_user}', URL user_id: '{user_id}'")
+    logger.info(f"🔍 DEBUG: User IDs match: {current_user == user_id}")
+
     if current_user != user_id:
+        logger.warning(f"🚫 403 Authorization failed - JWT user: '{current_user}', URL user: '{user_id}'")
         raise HTTPException(status_code=403, detail="Not authorized")
     try:
         db = get_firestore_client()
@@ -571,7 +575,11 @@ async def get_user(user_id: str, current_user: str = Depends(get_current_user)):
 @router.get("/{user_id}/profile-status", response_model=ProfileStatusResponse)
 async def get_user_profile_status(user_id: str, current_user: str = Depends(get_current_user)):
     """Get user's profile status and next navigation step"""
+    logger.info(f"🔍 DEBUG: Profile status endpoint - JWT user_id: '{current_user}', URL user_id: '{user_id}'")
+    logger.info(f"🔍 DEBUG: User IDs match: {current_user == user_id}")
+
     if current_user != user_id:
+        logger.warning(f"🚫 403 Authorization failed - JWT user: '{current_user}', URL user: '{user_id}'")
         raise HTTPException(status_code=403, detail="Not authorized")
     try:
         db = get_firestore_client()
@@ -733,7 +741,11 @@ async def get_profile_or_status(profile_id: str, current_user: str = Depends(get
         doc = db.collection('person_profiles').document(profile_id).get()
         if doc.exists:
             data = doc.to_dict()
+            logger.info(f"🔍 DEBUG: Profile access - Profile user_id: '{data['user_id']}', Current user: '{current_user}'")
+            logger.info(f"🔍 DEBUG: Profile ownership match: {data['user_id'] == current_user}")
+
             if data['user_id'] != current_user:
+                logger.warning(f"🚫 403 Profile access denied - Profile owner: '{data['user_id']}', Requester: '{current_user}'")
                 raise HTTPException(status_code=403, detail="Not authorized to access this profile")
             return ProfileResponse(**data)
 
@@ -779,7 +791,11 @@ async def update_profile(profile_id: str, profile: PersonProfile, current_user: 
             raise HTTPException(status_code=404, detail="Profile not found")
 
         data = doc.to_dict()
+        logger.info(f"🔍 DEBUG: Profile update - Profile user_id: '{data['user_id']}', Current user: '{current_user}'")
+        logger.info(f"🔍 DEBUG: Profile ownership match: {data['user_id'] == current_user}")
+
         if data['user_id'] != current_user:
+            logger.warning(f"🚫 403 Profile update denied - Profile owner: '{data['user_id']}', Requester: '{current_user}'")
             raise HTTPException(status_code=403, detail="Not authorized")
 
         # Update profile data
@@ -812,7 +828,11 @@ async def delete_profile(profile_id: str, current_user: str = Depends(get_curren
             raise HTTPException(status_code=404, detail="Profile not found")
 
         data = doc.to_dict()
+        logger.info(f"🔍 DEBUG: Profile delete - Profile user_id: '{data['user_id']}', Current user: '{current_user}'")
+        logger.info(f"🔍 DEBUG: Profile ownership match: {data['user_id'] == current_user}")
+
         if data['user_id'] != current_user:
+            logger.warning(f"🚫 403 Profile delete denied - Profile owner: '{data['user_id']}', Requester: '{current_user}'")
             raise HTTPException(status_code=403, detail="Not authorized")
 
         # Soft delete by marking as inactive
