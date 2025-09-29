@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can read/write their own data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Users can manage their own profiles
+    match /users/{userId}/profiles/{profileId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Marriage matches are readable by match owner
+    match /marriage-matches/{matchId} {
+      allow read: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null &&
+        request.auth.uid == request.resource.data.userId;
+    }
+
+    // Predictions are user-specific
+    match /predictions/{predictionId} {
+      allow read, write: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Astrologers are publicly readable
+    match /astrologers/{astrologerId} {
+      allow read: if true;
+      allow write: if request.auth != null &&
+        request.auth.token.admin == true;
+    }
+
+    // Astrologer reviews (subcollection)
+    match /astrologers/{astrologerId}/reviews/{reviewId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Consultations require authentication
+    match /consultations/{consultationId} {
+      allow read, write: if request.auth != null &&
+        (resource.data.userId == request.auth.uid ||
+         resource.data.astrologerId == request.auth.uid);
+    }
+
+    // Payments are user-specific
+    match /payments/{paymentId} {
+      allow read, write: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Payment orders for the user
+    match /payment_orders/{orderId} {
+      allow read, write: if request.auth != null &&
+        resource.data.user_id == request.auth.uid;
+    }
+
+    // Legacy person_profiles collection (for backward compatibility)
+    match /person_profiles/{profileId} {
+      allow read, write: if request.auth != null &&
+        resource.data.user_id == request.auth.uid;
+    }
+
+    // Legacy predictions subcollections under profiles
+    match /person_profiles/{profileId}/predictions/{predictionId} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/person_profiles/$(profileId)).data.user_id == request.auth.uid;
+    }
+  }
+}

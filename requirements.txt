@@ -1,0 +1,59 @@
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Fix for macOS LibreSSL compatibility
+urllib3==1.26.18
+
+# Firebase and Google Cloud (Compatible versions)
+firebase-admin==6.2.0
+google-cloud-firestore==2.13.1
+google-cloud-storage==2.10.0
+
+# Data Validation and Settings
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Authentication and Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+
+# HTTP and Utilities
+requests==2.31.0
+httpx==0.25.2
+python-decouple==3.8
+
+# OpenAI API
+openai==1.35.0
+
+# Date and Time
+pytz==2.31.0
+python-dateutil==2.8.2
+
+# Security and Performance Dependencies
+redis==5.0.1
+slowapi==0.1.9
+prometheus-client==0.19.0
+
+# Google OAuth (Compatible versions)
+google-auth==2.23.4
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
+
+# Development and Testing Dependencies
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+faker==20.1.0
+
+# Code Quality Tools
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.1
+pre-commit==3.5.0
+
+# Additional utilities for production
+gunicorn==21.2.0
+python-json-logger==2.0.7
+structlog==23.2.0
