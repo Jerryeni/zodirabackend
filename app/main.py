@@ -76,7 +76,7 @@ logger.info(f"CORS configured successfully for {settings.environment} environmen
 # Include API routers
 app.include_router(health_router, prefix="/api/v1", tags=["health"])
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
-app.include_router(user_management_router, prefix="/api/v1/auth", tags=["User Management"])
+app.include_router(user_management_router, prefix="/api/v1/users", tags=["User Management"])
 app.include_router(astrology_router, prefix="/api/v1/astrology", tags=["Astrology"])
 app.include_router(enhanced_astrology_router, prefix="/api/v1/enhanced", tags=["Enhanced Astrology"])
 

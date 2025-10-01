@@ -14,6 +14,7 @@ import logging
 from datetime import datetime, date, time
 from typing import Dict, List, Optional, Any
 from dateutil.relativedelta import relativedelta
+from google.cloud.firestore import FieldFilter
 
 from app.config.settings import settings
 from app.config.firebase import get_firestore_client
@@ -68,7 +69,8 @@ class EnhancedAstrologyService:
             predictions = await self._generate_predictions(user_id, profile_id, profile_data, chart_data)
 
             # Get existing profile data
-            profile_ref = self.db.collection('users').document(user_id).collection('profiles').document(profile_id)
+            # Read profile from top-level 'person_profiles' collection
+            profile_ref = self.db.collection('person_profiles').document(profile_id)
             profile_doc = profile_ref.get()
 
             if not profile_doc.exists:
@@ -188,16 +190,33 @@ class EnhancedAstrologyService:
             # Use existing astrology service for chart generation
             from app.services.astrology_service import astrology_service
 
-            # Convert profile data to birth details format
+            # Convert profile data to birth details format (normalize string date/time)
+            bd = profile_data.get('birth_date', date.today())
+            bt = profile_data.get('birth_time', time(12, 0))
+
+            if isinstance(bd, str):
+                try:
+                    bd = date.fromisoformat(bd)
+                except ValueError:
+                    bd = date.today()
+
+            if isinstance(bt, str):
+                try:
+                    bt = time.fromisoformat(bt)
+                except ValueError:
+                    bt = time(12, 0)
+
             birth_details = {
-                'year': profile_data.get('birth_date', date.today()).year,
-                'month': profile_data.get('birth_date', date.today()).month,
-                'date': profile_data.get('birth_date', date.today()).day,
-                'hour': profile_data.get('birth_time', time(12, 0)).hour,
-                'minute': profile_data.get('birth_time', time(12, 0)).minute,
+                'year': bd.year,
+                'month': bd.month,
+                'date': bd.day,
+                'hour': bt.hour,
+                'minute': bt.minute,
                 'latitude': profile_data.get('latitude', 0),
                 'longitude': profile_data.get('longitude', 0),
-                'timezone': profile_data.get('timezone', 'Asia/Kolkata')
+                'timezone': profile_data.get('timezone', 'Asia/Kolkata'),
+                # Required by astrology_service.generate_astrology_chart
+                'birth_datetime': datetime(bd.year, bd.month, bd.day, bt.hour, bt.minute)
             }
 
             # Generate chart using existing service
@@ -376,7 +395,8 @@ class EnhancedAstrologyService:
                 pred_ref = self.db.collection('predictions').document(prediction.id)
                 batch.set(pred_ref, prediction.dict())
 
-            await batch.commit()
+            # Firestore batch.commit() is synchronous
+            batch.commit()
             logger.info(f"Saved {len(predictions)} predictions for profile {profile_id}")
 
         except Exception as e:
@@ -398,7 +418,8 @@ class EnhancedAstrologyService:
     async def _get_profile_data(self, user_id: str, profile_id: str) -> Optional[Dict[str, Any]]:
         """Get profile data from Firestore"""
         try:
-            profile_ref = self.db.collection('users').document(user_id).collection('profiles').document(profile_id)
+            # Fetch from top-level 'person_profiles'
+            profile_ref = self.db.collection('person_profiles').document(profile_id)
             profile_doc = profile_ref.get()
 
             if profile_doc.exists:
@@ -473,16 +494,19 @@ class EnhancedAstrologyService:
         """Get predictions for a profile"""
         try:
             predictions_ref = self.db.collection('predictions')
-            query = predictions_ref.where('profile_id', '==', profile_id)\
-                                 .where('is_active', '==', True)\
-                                 .where('expires_at', '>', datetime.utcnow())\
-                                 .limit(10)
+            query = predictions_ref.where(filter=FieldFilter('profile_id', '==', profile_id))\
+                                   .where(filter=FieldFilter('is_active', '==', True))\
+                                   .where(filter=FieldFilter('expires_at', '>', datetime.utcnow()))\
+                                   .limit(10)
 
             predictions = []
             for doc in query.stream():
-                data = doc.to_dict()
-                prediction = Prediction(**data)
-                predictions.append(prediction)
+                try:
+                    data = doc.to_dict()
+                    prediction = Prediction(**data)
+                    predictions.append(prediction)
+                except Exception as e:
+                    logger.warning(f"Skipping invalid prediction doc {doc.id}: {e}")
 
             return predictions
 
@@ -494,15 +518,18 @@ class EnhancedAstrologyService:
         """Get marriage matches for a profile"""
         try:
             matches_ref = self.db.collection('marriage_matches')
-            query = matches_ref.where('main_profile_id', '==', profile_id)\
-                             .where('is_active', '==', True)\
-                             .limit(10)
+            query = matches_ref.where(filter=FieldFilter('main_profile_id', '==', profile_id))\
+                               .where(filter=FieldFilter('is_active', '==', True))\
+                               .limit(10)
 
             matches = []
             for doc in query.stream():
-                data = doc.to_dict()
-                marriage_match = MarriageMatch(**data)
-                matches.append(marriage_match)
+                try:
+                    data = doc.to_dict()
+                    marriage_match = MarriageMatch(**data)
+                    matches.append(marriage_match)
+                except Exception as e:
+                    logger.warning(f"Skipping invalid marriage_match doc {doc.id}: {e}")
 
             return matches
 
@@ -514,14 +541,17 @@ class EnhancedAstrologyService:
         """Get partner profiles for marriage matching"""
         try:
             partners_ref = self.db.collection('users').document(user_id).collection('partner_profiles')
-            query = partners_ref.where('main_profile_id', '==', profile_id)\
-                              .where('is_active', '==', True)
+            query = partners_ref.where(filter=FieldFilter('main_profile_id', '==', profile_id))\
+                                .where(filter=FieldFilter('is_active', '==', True))
 
             partners = []
             for doc in query.stream():
-                data = doc.to_dict()
-                partner = PartnerProfile(**data)
-                partners.append(partner)
+                try:
+                    data = doc.to_dict()
+                    partner = PartnerProfile(**data)
+                    partners.append(partner)
+                except Exception as e:
+                    logger.warning(f"Skipping invalid partner_profile doc {doc.id}: {e}")
 
             return partners
 

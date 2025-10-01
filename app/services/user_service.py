@@ -1001,24 +1001,30 @@ class UserService:
             List of session data
         """
         try:
+            logger.info(f"🔍 Getting active sessions for user: {user_id}")
+
             sessions_ref = self.db.collection('user_sessions')
-            sessions = sessions_ref.where('user_id', '==', user_id).where('is_active', '==', True).stream()
+            sessions = sessions_ref.where(filter=FieldFilter('user_id', '==', user_id)).where(filter=FieldFilter('is_active', '==', True)).stream()
 
             session_list = []
             for session_doc in sessions:
-                session_data = session_doc.to_dict()
-                session_list.append({
-                    'session_token': session_doc.id,
-                    'created_at': session_data.get('created_at'),
-                    'expires_at': session_data.get('expires_at'),
-                    'last_accessed': session_data.get('last_accessed'),
-                    'device_info': session_data.get('device_info')
-                })
+                try:
+                    session_data = session_doc.to_dict()
+                    session_list.append({
+                        'session_token': session_doc.id,
+                        'created_at': session_data.get('created_at'),
+                        'expires_at': session_data.get('expires_at'),
+                        'last_accessed': session_data.get('last_accessed'),
+                        'device_info': session_data.get('device_info')
+                    })
+                except Exception as e:
+                    logger.warning(f"Skipping invalid session doc {session_doc.id}: {e}")
 
+            logger.info(f"✅ Found {len(session_list)} active sessions for user: {user_id}")
             return session_list
 
         except Exception as e:
-            logger.error(f"Failed to get user sessions for {user_id}: {e}")
+            logger.error(f"❌ Failed to get user sessions for {user_id}: {e}")
             return []
 
     async def check_persistent_login(self, session_token: str) -> Optional[Dict[str, Any]]:

@@ -8,7 +8,7 @@ This module provides comprehensive authentication endpoints that handle:
 - User profile flow management
 """
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Header
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Header, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, validator, EmailStr, Field
 from typing import Optional, Union, Dict, Any
@@ -86,11 +86,11 @@ class LogoutRequest(BaseModel):
 
 class ProfileCreateRequest(BaseModel):
     """Model for profile creation requests matching frontend structure"""
-    userId: str = Field(alias='user_id')  # Maps frontend user_id to backend userId
+    userId: Optional[str] = Field(default=None, alias='user_id')  # Maps frontend user_id to backend userId
     name: str
-    birth_date: str  # ISO date string
-    birth_time: str  # ISO time string
-    birth_place: str
+    birth_date: str = Field(alias='birthDate')
+    birth_time: str = Field(alias='birthTime')
+    birth_place: str = Field(alias='birthPlace')
     gender: str
     createdAt: str = Field(alias='created_at')  # Maps frontend created_at to backend createdAt
 
@@ -99,6 +99,9 @@ class ProfileCreateRequest(BaseModel):
 
     @validator('userId')
     def validate_user_id(cls, v):
+        # Allow None; server will use authenticated user_id (from token) if not provided
+        if v is None:
+            return v
         if not v or not v.strip():
             raise ValueError('User ID cannot be empty')
         return v.strip()
@@ -524,96 +527,8 @@ class ProfileStatusResponse(BaseModel):
     next_step: str
     profile_count: int
 
-@router.post("/{user_id}", response_model=UserResponse)
-async def create_user(user_id: str, user: User, current_user: str = Depends(get_current_user)):
-    if current_user != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    user_data = user.dict()
-    user_data['created_at'] = datetime.utcnow()
-    try:
-        db = get_firestore_client()
-        db.collection('users').document(user_id).set(user_data)
-        return UserResponse(**user_data)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{user_id}", response_model=UserResponse)
-async def get_user(user_id: str, current_user: str = Depends(get_current_user)):
-    logger.info(f"🔍 DEBUG: Profile endpoint - JWT user_id: '{current_user}', URL user_id: '{user_id}'")
-    logger.info(f"🔍 DEBUG: User IDs match: {current_user == user_id}")
 
-    if current_user != user_id:
-        logger.warning(f"🚫 403 Authorization failed - JWT user: '{current_user}', URL user: '{user_id}'")
-        raise HTTPException(status_code=403, detail="Not authorized")
-    try:
-        db = get_firestore_client()
-        doc = db.collection('users').document(user_id).get()
-        if not doc.exists:
-            raise HTTPException(status_code=404, detail="User not found")
-        data = doc.to_dict()
-
-        # Check if user has any active profiles
-        profiles_query = db.collection('person_profiles').where(filter=FieldFilter('user_id', '==', user_id)).where(filter=FieldFilter('is_active', '==', True)).limit(1)
-        has_profiles = len(profiles_query.get()) > 0
-
-        # Map Firestore field name to model field name
-        profile_complete = data.get('profile_complete', False)
-
-        return UserResponse(
-            id=user_id,
-            email=data.get('email'),
-            phone=data.get('phone'),
-            displayName=data.get('displayName'),
-            subscriptionType=data.get('subscriptionType', 'free'),
-            createdAt=data.get('createdAt'),
-            profileComplete=profile_complete,
-            hasProfiles=has_profiles
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/{user_id}/profile-status", response_model=ProfileStatusResponse)
-async def get_user_profile_status(user_id: str, current_user: str = Depends(get_current_user)):
-    """Get user's profile status and next navigation step"""
-    logger.info(f"🔍 DEBUG: Profile status endpoint - JWT user_id: '{current_user}', URL user_id: '{user_id}'")
-    logger.info(f"🔍 DEBUG: User IDs match: {current_user == user_id}")
-
-    if current_user != user_id:
-        logger.warning(f"🚫 403 Authorization failed - JWT user: '{current_user}', URL user: '{user_id}'")
-        raise HTTPException(status_code=403, detail="Not authorized")
-    try:
-        db = get_firestore_client()
-
-        # Get user data
-        user_doc = db.collection('users').document(user_id).get()
-        if not user_doc.exists:
-            raise HTTPException(status_code=404, detail="User not found")
-        user_data = user_doc.to_dict()
-
-        # Get profile count
-        profiles_query = db.collection('person_profiles').where(filter=FieldFilter('user_id', '==', user_id)).where(filter=FieldFilter('is_active', '==', True))
-        profile_count = len(profiles_query.get())
-
-        # Determine next step
-        profile_complete = user_data.get('profile_complete', False)
-        has_profiles = profile_count > 0
-
-        if profile_complete or has_profiles:
-            next_step = 'dashboard'
-        else:
-            next_step = 'complete_profile'
-
-        return ProfileStatusResponse(
-            user_id=user_id,
-            profile_complete=profile_complete,
-            has_profiles=has_profiles,
-            next_step=next_step,
-            profile_count=profile_count
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/profiles", response_model=List[ProfileResponse])
 async def get_profiles(current_user: str = Depends(get_current_user)):
@@ -659,15 +574,29 @@ async def calculate_astrology_data(birth_date, birth_time, birth_place):
         'ascendant': "Sagittarius"  # Mock ascendant
     }
 
+@router.post("/profiles/new", response_model=ProfileResponse)
 @router.post("/profiles", response_model=ProfileResponse)
 async def create_profile(profile_request: ProfileCreateRequest, request: Request, current_user: str = Depends(get_current_user)):
     """
     Create a new simplified profile for the current user.
     """
     try:
+        logger.info("🧭 ENTER create_profile endpoint")
         # Log request for debugging
         body = await request.json()
-        logger.info(f"Profile creation request for user {current_user}: {body}")
+        # Log raw Authorization header and IDs to aid debugging
+        auth_header = request.headers.get('authorization')
+        logger.info(f"🔐 Authorization header received: {auth_header[:30]}..." if auth_header else "🔐 Authorization header missing")
+        logger.info(f"🔍 DEBUG: Token user_id: '{current_user}'")
+        logger.info(f"🔍 DEBUG: Request body userId: '{getattr(profile_request, 'userId', None)}'")
+
+        # Trust server-side identity; ignore client-supplied userId if it mismatches
+        effective_user_id = current_user
+        if getattr(profile_request, 'userId', None) and profile_request.userId != current_user:
+            logger.warning(f"⚠️ Mismatch between token user ('{current_user}') and request user ('{profile_request.userId}'); using token user_id")
+
+        logger.info(f"✅ Authorization resolved. Using user_id '{effective_user_id}' for profile creation.")
+        logger.info(f"Profile creation request for user '{effective_user_id}': {body}")
 
         # Get Firestore client
         db = get_firestore_client()
@@ -685,11 +614,12 @@ async def create_profile(profile_request: ProfileCreateRequest, request: Request
 
         profile_data = {
             'id': profile_id,
-            'user_id': profile_request.userId,
-            'userId': profile_request.userId,  # For backward compatibility
+            'user_id': effective_user_id,
+            'userId': effective_user_id,  # For backward compatibility
             'name': profile_request.name,
-            'birth_date': birth_date,
-            'birth_time': birth_time,
+            # Store Firestore-friendly primitives (strings), not date/time objects
+            'birth_date': profile_request.birth_date,    # e.g., "1990-01-01"
+            'birth_time': profile_request.birth_time,    # e.g., "17:24:00"
             'birth_place': profile_request.birth_place,
             'gender': profile_request.gender,
             'relationship': 'self',
@@ -708,11 +638,11 @@ async def create_profile(profile_request: ProfileCreateRequest, request: Request
         # Save profile to Firestore
         db.collection('person_profiles').document(profile_id).set(profile_data)
 
-        # Update user's profile completion status using the userId from request
-        db.collection('users').document(profile_request.userId).update({
+        # Update user's profile completion status using the authenticated userId
+        db.collection('users').document(effective_user_id).set({
             'profile_complete': True,
             'updated_at': datetime.utcnow()
-        })
+        }, merge=True)
 
         # Return the created profile
         return ProfileResponse(**profile_data)

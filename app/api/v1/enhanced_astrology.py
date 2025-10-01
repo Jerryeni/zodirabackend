@@ -22,6 +22,8 @@ from app.models.profile import (
 from app.services.user_service import user_service
 from app.services.enhanced_astrology_service import enhanced_astrology_service
 from app.core.exceptions import ValidationError, NotFoundError
+from google.cloud import firestore as gcf
+from google.cloud.firestore import FieldFilter
 
 router = APIRouter()
 security = HTTPBearer()
@@ -92,10 +94,30 @@ async def get_user_sessions(current_user: str = Depends(get_current_user)):
     Get all active sessions for the current user
     """
     try:
-        sessions = await user_service.get_user_sessions(current_user)
-        return {"sessions": sessions}
+        logger.info(f"🔍 Getting sessions for authenticated user: {current_user}")
 
+        # Ensure user has permission to view sessions (basic check)
+        if not current_user or len(current_user) < 3:
+            logger.warning(f"🚫 Invalid user ID for session access: {current_user}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid user authorization"
+            )
+
+        sessions = await user_service.get_user_sessions(current_user)
+
+        logger.info(f"✅ Found {len(sessions)} active sessions for user: {current_user}")
+
+        return {
+            "sessions": sessions,
+            "user_id": current_user,
+            "count": len(sessions)
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"❌ Failed to get sessions for user {current_user}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get sessions: {str(e)}"
@@ -112,9 +134,9 @@ async def generate_profile_chart(
     Generate complete astrology chart with predictions for a profile
     """
     try:
-        # Get profile data
+        # Get profile data (stored in top-level 'person_profiles')
         db = get_firestore_client()
-        profile_ref = db.collection('users').document(current_user).collection('profiles').document(profile_id)
+        profile_ref = db.collection('person_profiles').document(profile_id)
         profile_doc = profile_ref.get()
 
         if not profile_doc.exists:
@@ -124,6 +146,12 @@ async def generate_profile_chart(
             )
 
         profile_data = profile_doc.to_dict()
+        # Verify ownership
+        if profile_data.get('user_id') != current_user:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
 
         # Generate complete chart with predictions
         enhanced_profile = await enhanced_astrology_service.generate_complete_profile_chart(
@@ -223,9 +251,9 @@ async def generate_specific_prediction(
     Generate a specific type of prediction for a profile
     """
     try:
-        # Get profile data
+        # Get profile data (stored in top-level 'person_profiles')
         db = get_firestore_client()
-        profile_ref = db.collection('users').document(current_user).collection('profiles').document(profile_id)
+        profile_ref = db.collection('person_profiles').document(profile_id)
         profile_doc = profile_ref.get()
 
         if not profile_doc.exists:
@@ -428,27 +456,33 @@ async def get_dashboard_data(current_user: str = Depends(get_current_user)):
     try:
         db = get_firestore_client()
 
-        # Get user profiles
-        profiles_ref = db.collection('users').document(current_user).collection('profiles')
-        profiles_query = profiles_ref.where('is_active', '==', True).limit(5)
+        # Get user profiles from top-level 'person_profiles'
+        profiles_query = db.collection('person_profiles')\
+            .where(filter=FieldFilter('user_id', '==', current_user))\
+            .where(filter=FieldFilter('is_active', '==', True))\
+            .limit(5)
         profiles = []
 
-        for doc in profiles_query.stream():
-            profile_data = doc.to_dict()
-            profile_id = doc.id
+        for doc in profiles_query.get():
+            try:
+                profile_data = doc.to_dict()
+                profile_id = doc.id
 
-            # Get enhanced profile data
-            enhanced_profile = await enhanced_astrology_service.get_profile_with_predictions(
-                current_user, profile_id
-            )
-            if enhanced_profile:
-                profiles.append(enhanced_profile)
+                # Get enhanced profile data
+                enhanced_profile = await enhanced_astrology_service.get_profile_with_predictions(
+                    current_user, profile_id
+                )
+                if enhanced_profile:
+                    profiles.append(enhanced_profile)
+            except Exception:
+                # Skip problematic profile rather than failing entire dashboard
+                continue
 
         # Get recent predictions
         predictions_ref = db.collection('predictions')
-        recent_predictions_query = predictions_ref.where('user_id', '==', current_user)\
-                                                .where('is_active', '==', True)\
-                                                .order_by('created_at', direction='DESCENDING')\
+        recent_predictions_query = predictions_ref.where(filter=FieldFilter('user_id', '==', current_user))\
+                                                .where(filter=FieldFilter('is_active', '==', True))\
+                                                .order_by('created_at', direction=gcf.Query.DESCENDING)\
                                                 .limit(10)
 
         recent_predictions = []
@@ -459,9 +493,9 @@ async def get_dashboard_data(current_user: str = Depends(get_current_user)):
 
         # Get recent marriage matches
         matches_ref = db.collection('marriage_matches')
-        recent_matches_query = matches_ref.where('user_id', '==', current_user)\
-                                        .where('is_active', '==', True)\
-                                        .order_by('created_at', direction='DESCENDING')\
+        recent_matches_query = matches_ref.where(filter=FieldFilter('user_id', '==', current_user))\
+                                        .where(filter=FieldFilter('is_active', '==', True))\
+                                        .order_by('created_at', direction=gcf.Query.DESCENDING)\
                                         .limit(5)
 
         recent_matches = []
@@ -498,9 +532,9 @@ async def refresh_profile_predictions(
     Refresh/regenerate predictions for a profile
     """
     try:
-        # Get profile data
+        # Get profile data (stored in top-level 'person_profiles')
         db = get_firestore_client()
-        profile_ref = db.collection('users').document(current_user).collection('profiles').document(profile_id)
+        profile_ref = db.collection('person_profiles').document(profile_id)
         profile_doc = profile_ref.get()
 
         if not profile_doc.exists:
