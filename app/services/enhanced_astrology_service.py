@@ -655,17 +655,30 @@ class EnhancedAstrologyService:
             astrology_data = await self._call_free_astrology_api(api_data)
 
             if astrology_data:
-                # Process and enhance the API response
-                enhanced_data = self._enhance_astrology_data(astrology_data, birth_place, gender)
+                try:
+                    # Process and enhance the API response
+                    enhanced_data = self._enhance_astrology_data(astrology_data, birth_place, gender)
 
-                # Cache the result
-                self._api_cache[cache_key] = enhanced_data
+                    # Cache the result
+                    self._api_cache[cache_key] = enhanced_data
 
-                logger.info("✅ Successfully calculated comprehensive astrology data")
-                return enhanced_data
+                    logger.info("✅ Successfully calculated comprehensive astrology data")
+                    return enhanced_data
+                except Exception as e:
+                    logger.error(f"❌ Failed to enhance API data: {e}")
+                    logger.warning("⚠️ API data enhancement failed, using fallback calculations")
+                    return self._get_fallback_astrology_data(birth_date, birth_time, birth_place, gender)
             else:
                 logger.warning("⚠️ API call failed, using fallback calculations")
-                return self._get_fallback_astrology_data(birth_date, birth_time, birth_place, gender)
+                fallback_data = self._get_fallback_astrology_data(birth_date, birth_time, birth_place, gender)
+
+                # Verify fallback data is valid
+                if fallback_data and fallback_data.get("moon_sign") != "Unknown":
+                    logger.info("✅ Successfully generated fallback astrology data")
+                    return fallback_data
+                else:
+                    logger.error("❌ Fallback calculation also failed")
+                    return self._get_basic_fallback_data(birth_date, birth_time, birth_place, gender)
 
         except Exception as e:
             logger.error(f"❌ Failed to calculate comprehensive astrology: {e}")
@@ -678,40 +691,65 @@ class EnhancedAstrologyService:
                 logger.warning("⚠️ FREE_ASTRO_API_KEY not configured, using fallback calculations")
                 return None
 
-            # Try multiple API endpoints
-            api_urls = [
-                "https://api.vedicastroapi.com/v3-json/horoscope/planets",
-                "https://json.freeastrologyapi.com/planets",
-                "https://api.astroapi.com/v1/planets"
+            # Try multiple API endpoints with correct request formats
+            api_configs = [
+                {
+                    "url": "https://api.vedicastroapi.com/v3-json/horoscope/planets",
+                    "headers": {"x-api-key": self.free_astrology_api_key, "Content-Type": "application/json"},
+                    "payload": api_data
+                },
+                {
+                    "url": "https://json.freeastrologyapi.com/planets",
+                    "headers": {"x-api-key": self.free_astrology_api_key, "Content-Type": "application/json"},
+                    "payload": {
+                        "year": api_data.get("date", "").split("-")[0] if api_data.get("date") else None,
+                        "month": api_data.get("date", "").split("-")[1] if api_data.get("date") else None,
+                        "date": api_data.get("date", "").split("-")[2] if api_data.get("date") else None,
+                        "hours": api_data.get("time", "").split(":")[0] if api_data.get("time") else None,
+                        "minutes": api_data.get("time", "").split(":")[1] if api_data.get("time") else None,
+                        "seconds": 0,
+                        "latitude": api_data.get("latitude", 0),
+                        "longitude": api_data.get("longitude", 0),
+                        "timezone": api_data.get("timezone", 0),
+                        "settings": api_data.get("settings", {})
+                    }
+                },
+                {
+                    "url": "https://api.astroapi.com/v1/planets",
+                    "headers": {"x-api-key": self.free_astrology_api_key, "Content-Type": "application/json"},
+                    "payload": api_data
+                }
             ]
 
-            headers = {
-                "x-api-key": self.free_astrology_api_key,
-                "Content-Type": "application/json"
-            }
-
-            for api_url in api_urls:
+            for config in api_configs:
                 try:
                     async with httpx.AsyncClient(timeout=15.0) as client:
-                        logger.info(f"🔮 Calling astrology API: {api_url}")
-                        response = await client.post(api_url, json=api_data, headers=headers)
+                        logger.info(f"🔮 Calling astrology API: {config['url']}")
+
+                        # Remove None values from payload
+                        payload = {k: v for k, v in config["payload"].items() if v is not None}
+
+                        response = await client.post(config["url"], json=payload, headers=config["headers"])
 
                         if response.status_code == 200:
                             data = response.json()
                             logger.info("✅ Astrology API call successful")
                             return data
                         elif response.status_code == 404:
-                            logger.warning(f"⚠️ API endpoint not found: {api_url}")
+                            logger.warning(f"⚠️ API endpoint not found: {config['url']}")
                             continue
                         elif response.status_code == 403:
-                            logger.warning(f"⚠️ API access forbidden: {api_url}")
+                            logger.warning(f"⚠️ API access forbidden: {config['url']}")
+                            continue
+                        elif response.status_code == 400:
+                            logger.warning(f"⚠️ API bad request {response.status_code}: {response.text}")
                             continue
                         else:
                             logger.warning(f"⚠️ API error {response.status_code}: {response.text}")
                             continue
 
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to call {api_url}: {e}")
+                    logger.warning(f"⚠️ Failed to call {config['url']}: {e}")
                     continue
 
             logger.warning("⚠️ All astrology API endpoints failed, using fallback calculations")
@@ -907,6 +945,145 @@ class EnhancedAstrologyService:
         }
         return modalities.get(zodiac_sign, "Unknown")
 
+    def _calculate_moon_sign(self, day: int, month: int) -> str:
+        """Calculate moon sign based on birth date"""
+        try:
+            # Moon stays in each sign for about 2.5 days
+            moon_signs = [
+                "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
+                "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+            ]
+
+            # Calculate day of year
+            day_of_year = day
+            for m in range(1, month):
+                if m in [1, 3, 5, 7, 8, 10, 12]:
+                    day_of_year += 31
+                elif m in [4, 6, 9, 11]:
+                    day_of_year += 30
+                elif m == 2:
+                    day_of_year += 28  # Simplified, ignoring leap years
+
+            # Moon sign changes every ~2.5 days
+            moon_position = (day_of_year / 2.5) % 12
+            return moon_signs[int(moon_position)]
+
+        except Exception as e:
+            logger.error(f"Failed to calculate moon sign: {e}")
+            return "Cancer"  # Default fallback
+
+    def _calculate_ascendant_time(self, birth_time: str, birth_place: str) -> str:
+        """Calculate ascendant based on birth time and place"""
+        try:
+            hour = int(birth_time.split(':')[0]) if ':' in birth_time else 12
+
+            # Simple calculation based on birth time
+            ascendant_signs = [
+                "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
+                "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+            ]
+
+            # Each sign rises for approximately 2 hours
+            ascendant_index = (hour // 2) % 12
+            return ascendant_signs[ascendant_index]
+
+        except Exception:
+            return "Sagittarius"  # Default fallback
+
+    def _calculate_varna_mapping(self, gender: str, zodiac_sign: str) -> str:
+        """Calculate Varna with enhanced logic"""
+        varna_mapping = {
+            "Aries": "Kshatriya", "Taurus": "Vaishya", "Gemini": "Shudra",
+            "Cancer": "Brahmin", "Leo": "Kshatriya", "Virgo": "Vaishya",
+            "Libra": "Shudra", "Scorpio": "Brahmin", "Sagittarius": "Kshatriya",
+            "Capricorn": "Vaishya", "Aquarius": "Shudra", "Pisces": "Brahmin"
+        }
+        return varna_mapping.get(zodiac_sign, "Brahmin")
+
+    def _calculate_guna_mapping(self, moon_sign: str) -> str:
+        """Calculate Guna with enhanced logic"""
+        guna_mapping = {
+            "Aries": "Rajasic", "Taurus": "Tamasic", "Gemini": "Rajasic",
+            "Cancer": "Satvik", "Leo": "Rajasic", "Virgo": "Satvik",
+            "Libra": "Rajasic", "Scorpio": "Tamasic", "Sagittarius": "Satvik",
+            "Capricorn": "Tamasic", "Aquarius": "Satvik", "Pisces": "Satvik"
+        }
+        return guna_mapping.get(moon_sign, "Satvik")
+
+    def _calculate_nakshatra(self, day: int, month: int) -> str:
+        """Calculate nakshatra based on birth date"""
+        try:
+            nakshatras = [
+                "Ashwini", "Bharani", "Krittika", "Rohini", "Mrigashira", "Ardra",
+                "Punarvasu", "Pushya", "Ashlesha", "Magha", "Purva Phalguni", "Uttara Phalguni",
+                "Hasta", "Chitra", "Swati", "Vishakha", "Anuradha", "Jyeshtha",
+                "Mula", "Purva Ashadha", "Uttara Ashadha", "Shravana", "Dhanishta", "Shatabhisha",
+                "Purva Bhadrapada", "Uttara Bhadrapada", "Revati"
+            ]
+
+            # Calculate day of year
+            day_of_year = day
+            for m in range(1, month):
+                if m in [1, 3, 5, 7, 8, 10, 12]:
+                    day_of_year += 31
+                elif m in [4, 6, 9, 11]:
+                    day_of_year += 30
+                elif m == 2:
+                    day_of_year += 28
+
+            # Each nakshatra spans ~13.33 degrees, full circle 360 degrees
+            nakshatra_index = int((day_of_year * 27 / 365) % 27)
+            return nakshatras[nakshatra_index]
+
+        except Exception as e:
+            logger.error(f"Failed to calculate nakshatra: {e}")
+            return "Ashwini"  # Default fallback
+
+    def _get_planetary_positions(self, zodiac_sign: str) -> Dict[str, Any]:
+        """Get fallback planetary positions"""
+        return {
+            "Sun": {"sign": zodiac_sign, "degree": 15.5, "house": 1},
+            "Moon": {"sign": self._calculate_moon_sign(15, 6), "degree": 45.2, "house": 4},
+            "Mars": {"sign": "Aries", "degree": 22.8, "house": 7},
+            "Mercury": {"sign": "Gemini", "degree": 18.3, "house": 9},
+            "Jupiter": {"sign": "Sagittarius", "degree": 25.7, "house": 3},
+            "Venus": {"sign": "Taurus", "degree": 12.4, "house": 8},
+            "Saturn": {"sign": "Capricorn", "degree": 28.9, "house": 4},
+            "Rahu": {"sign": "Cancer", "degree": 15.2, "house": 10},
+            "Ketu": {"sign": "Capricorn", "degree": 15.2, "house": 4}
+        }
+
+    def _get_houses(self, zodiac_sign: str, moon_sign: str) -> Dict[str, Any]:
+        """Get fallback house positions"""
+        return {
+            "house_1": {"sign": zodiac_sign, "planets": ["Sun"]},
+            "house_2": {"sign": self._get_next_zodiac_sign(zodiac_sign), "planets": []},
+            "house_3": {"sign": self._get_next_zodiac_sign(zodiac_sign, 2), "planets": []},
+            "house_4": {"sign": moon_sign, "planets": ["Moon"]},
+            "house_5": {"sign": self._get_next_zodiac_sign(moon_sign), "planets": []},
+            "house_6": {"sign": self._get_next_zodiac_sign(moon_sign, 2), "planets": []},
+            "house_7": {"sign": self._get_next_zodiac_sign(moon_sign, 3), "planets": []},
+            "house_8": {"sign": self._get_next_zodiac_sign(moon_sign, 4), "planets": []},
+            "house_9": {"sign": self._get_next_zodiac_sign(moon_sign, 5), "planets": []},
+            "house_10": {"sign": self._get_next_zodiac_sign(moon_sign, 6), "planets": []},
+            "house_11": {"sign": self._get_next_zodiac_sign(moon_sign, 7), "planets": []},
+            "house_12": {"sign": self._get_next_zodiac_sign(moon_sign, 8), "planets": []}
+        }
+
+    def _get_next_zodiac_sign(self, current_sign: str, steps: int = 1) -> str:
+        """Get next zodiac sign"""
+        signs = [
+            "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
+            "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+        ]
+
+        try:
+            current_index = signs.index(current_sign)
+            next_index = (current_index + steps) % 12
+            return signs[next_index]
+        except ValueError:
+            return "Taurus"  # Default fallback
+
     def _get_fallback_astrology_data(self, birth_date: str, birth_time: str, birth_place: str, gender: str) -> Dict[str, Any]:
         """Provide comprehensive fallback astrology data when API fails"""
         logger.info("📋 Using enhanced fallback astrology calculations")
@@ -929,14 +1106,14 @@ class EnhancedAstrologyService:
             moon_sign = self._calculate_moon_sign(day, month)
 
             # Calculate nakshatra based on moon position
-            nakshatra = self._calculate_nakshatra_enhanced(day, month)
+            nakshatra = self._calculate_nakshatra(day, month)
 
             # Calculate ascendant based on birth time and place
-            ascendant = self._calculate_ascendant(birth_time, birth_place)
+            ascendant = self._calculate_ascendant_time(birth_time, birth_place)
 
             # Calculate other Vedic elements
-            varna = self._calculate_varna_enhanced(gender, zodiac_sign)
-            guna = self._calculate_guna_enhanced(moon_sign)
+            varna = self._calculate_varna_mapping(gender, zodiac_sign)
+            guna = self._calculate_guna_mapping(moon_sign)
 
             return {
                 "birth_place": birth_place,
@@ -951,8 +1128,8 @@ class EnhancedAstrologyService:
                 "modality": self._get_modality_from_zodiac(zodiac_sign),
                 "calculated_at": datetime.utcnow().isoformat(),
                 "calculation_method": "enhanced_fallback",
-                "planetary_positions": self._get_fallback_planetary_positions(zodiac_sign),
-                "houses": self._get_fallback_houses(zodiac_sign, moon_sign)
+                "planetary_positions": self._get_planetary_positions(zodiac_sign),
+                "houses": self._get_houses(zodiac_sign, moon_sign)
             }
 
         except Exception as e:
@@ -972,135 +1149,69 @@ class EnhancedAstrologyService:
                 "calculated_at": datetime.utcnow().isoformat(),
                 "calculation_method": "basic_fallback"
             }
-    
-        def _calculate_moon_sign(self, day: int, month: int) -> str:
-            """Calculate moon sign based on birth date"""
-            # Moon stays in each sign for about 2.5 days
-            moon_signs = [
-                "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
-                "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
-            ]
-    
-            # Calculate day of year
-            day_of_year = day
-            for m in range(1, month):
-                if m in [1, 3, 5, 7, 8, 10, 12]:
-                    day_of_year += 31
-                elif m in [4, 6, 9, 11]:
-                    day_of_year += 30
-                elif m == 2:
-                    day_of_year += 28  # Simplified, ignoring leap years
-    
-            # Moon sign changes every ~2.5 days
-            moon_position = (day_of_year / 2.5) % 12
-            return moon_signs[int(moon_position)]
-    
-        def _calculate_nakshatra_enhanced(self, day: int, month: int) -> str:
-            """Calculate nakshatra with enhanced accuracy"""
-            nakshatras = [
-                "Ashwini", "Bharani", "Krittika", "Rohini", "Mrigashira", "Ardra",
-                "Punarvasu", "Pushya", "Ashlesha", "Magha", "Purva Phalguni", "Uttara Phalguni",
-                "Hasta", "Chitra", "Swati", "Vishakha", "Anuradha", "Jyeshtha",
-                "Mula", "Purva Ashadha", "Uttara Ashadha", "Shravana", "Dhanishta", "Shatabhisha",
-                "Purva Bhadrapada", "Uttara Bhadrapada", "Revati"
-            ]
-    
-            # Calculate day of year
-            day_of_year = day
-            for m in range(1, month):
-                if m in [1, 3, 5, 7, 8, 10, 12]:
-                    day_of_year += 31
-                elif m in [4, 6, 9, 11]:
-                    day_of_year += 30
-                elif m == 2:
-                    day_of_year += 28
-    
-            # Each nakshatra spans ~13.33 degrees, full circle 360 degrees
-            nakshatra_index = int((day_of_year * 27 / 365) % 27)
-            return nakshatras[nakshatra_index]
-    
-        def _calculate_ascendant(self, birth_time: str, birth_place: str) -> str:
-            """Calculate ascendant based on birth time and place"""
-            try:
-                hour = int(birth_time.split(':')[0]) if ':' in birth_time else 12
-    
-                # Simple calculation based on birth time
-                ascendant_signs = [
-                    "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
-                    "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
-                ]
-    
-                # Each sign rises for approximately 2 hours
-                ascendant_index = (hour // 2) % 12
-                return ascendant_signs[ascendant_index]
-    
-            except Exception:
-                return "Sagittarius"  # Default fallback
-    
-        def _calculate_varna_enhanced(self, gender: str, zodiac_sign: str) -> str:
-            """Calculate Varna with enhanced logic"""
-            varna_mapping = {
-                "Aries": "Kshatriya", "Taurus": "Vaishya", "Gemini": "Shudra",
-                "Cancer": "Brahmin", "Leo": "Kshatriya", "Virgo": "Vaishya",
-                "Libra": "Shudra", "Scorpio": "Brahmin", "Sagittarius": "Kshatriya",
-                "Capricorn": "Vaishya", "Aquarius": "Shudra", "Pisces": "Brahmin"
-            }
-            return varna_mapping.get(zodiac_sign, "Brahmin")
-    
-        def _calculate_guna_enhanced(self, moon_sign: str) -> str:
-            """Calculate Guna with enhanced logic"""
-            guna_mapping = {
-                "Aries": "Rajasic", "Taurus": "Tamasic", "Gemini": "Rajasic",
-                "Cancer": "Satvik", "Leo": "Rajasic", "Virgo": "Satvik",
-                "Libra": "Rajasic", "Scorpio": "Tamasic", "Sagittarius": "Satvik",
-                "Capricorn": "Tamasic", "Aquarius": "Satvik", "Pisces": "Satvik"
-            }
-            return guna_mapping.get(moon_sign, "Satvik")
-    
-        def _get_fallback_planetary_positions(self, zodiac_sign: str) -> Dict[str, Any]:
-            """Get fallback planetary positions"""
+
+
+    def _get_basic_fallback_data(self, birth_date: str, birth_time: str, birth_place: str, gender: str) -> Dict[str, Any]:
+        """Provide basic fallback data when all calculations fail"""
+        logger.info("📋 Using basic fallback astrology data")
+
+        try:
+            # Extract basic info from birth date
+            day = 15
+            month = 6
+
+            if birth_date and '-' in birth_date:
+                try:
+                    parts = birth_date.split('-')
+                    if len(parts) >= 2:
+                        month = int(parts[1])
+                        day = int(parts[2]) if len(parts) > 2 else 15
+                except (ValueError, IndexError):
+                    pass
+
+            # Simple zodiac calculation
+            zodiac_signs = ["Capricorn", "Aquarius", "Pisces", "Aries", "Taurus", "Gemini",
+                           "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius"]
+            zodiac_index = (month - 1) % 12
+            zodiac_sign = zodiac_signs[zodiac_index]
+
+            # Simple moon sign calculation
+            moon_sign = self._calculate_moon_sign(day, month) if day and month else "Cancer"
+
             return {
-                "Sun": {"sign": zodiac_sign, "degree": 15.5, "house": 1},
-                "Moon": {"sign": self._calculate_moon_sign(15, 6), "degree": 45.2, "house": 4},
-                "Mars": {"sign": "Aries", "degree": 22.8, "house": 7},
-                "Mercury": {"sign": "Gemini", "degree": 18.3, "house": 9},
-                "Jupiter": {"sign": "Sagittarius", "degree": 25.7, "house": 3},
-                "Venus": {"sign": "Taurus", "degree": 12.4, "house": 8},
-                "Saturn": {"sign": "Capricorn", "degree": 28.9, "house": 4},
-                "Rahu": {"sign": "Cancer", "degree": 15.2, "house": 10},
-                "Ketu": {"sign": "Capricorn", "degree": 15.2, "house": 4}
+                "birth_place": birth_place or "Unknown",
+                "gender": gender or "male",
+                "zodiac_sign": zodiac_sign,
+                "moon_sign": moon_sign,
+                "nakshatra": "Ashwini",
+                "ascendant": "Sagittarius",
+                "varna": "Brahmin",
+                "guna": "Satvik",
+                "element": self._get_element_from_zodiac(zodiac_sign),
+                "modality": self._get_modality_from_zodiac(zodiac_sign),
+                "calculated_at": datetime.utcnow().isoformat(),
+                "calculation_method": "basic_fallback",
+                "error": "All calculation methods failed, using basic fallback"
             }
-    
-        def _get_fallback_houses(self, zodiac_sign: str, moon_sign: str) -> Dict[str, Any]:
-            """Get fallback house positions"""
+
+        except Exception as e:
+            logger.error(f"❌ Even basic fallback failed: {e}")
+            # Ultimate fallback - return minimal valid data
             return {
-                "house_1": {"sign": zodiac_sign, "planets": ["Sun"]},
-                "house_2": {"sign": self._get_next_sign(zodiac_sign), "planets": []},
-                "house_3": {"sign": self._get_next_sign(zodiac_sign, 2), "planets": []},
-                "house_4": {"sign": moon_sign, "planets": ["Moon"]},
-                "house_5": {"sign": self._get_next_sign(moon_sign), "planets": []},
-                "house_6": {"sign": self._get_next_sign(moon_sign, 2), "planets": []},
-                "house_7": {"sign": self._get_next_sign(moon_sign, 3), "planets": []},
-                "house_8": {"sign": self._get_next_sign(moon_sign, 4), "planets": []},
-                "house_9": {"sign": self._get_next_sign(moon_sign, 5), "planets": []},
-                "house_10": {"sign": self._get_next_sign(moon_sign, 6), "planets": []},
-                "house_11": {"sign": self._get_next_sign(moon_sign, 7), "planets": []},
-                "house_12": {"sign": self._get_next_sign(moon_sign, 8), "planets": []}
+                "birth_place": birth_place or "Unknown",
+                "gender": gender or "male",
+                "zodiac_sign": "Capricorn",
+                "moon_sign": "Cancer",
+                "nakshatra": "Ashwini",
+                "ascendant": "Sagittarius",
+                "varna": "Brahmin",
+                "guna": "Satvik",
+                "element": "Earth",
+                "modality": "Cardinal",
+                "calculated_at": datetime.utcnow().isoformat(),
+                "calculation_method": "minimal_fallback",
+                "error": f"Complete calculation failure: {str(e)}"
             }
-    
-        def _get_next_sign(self, current_sign: str, steps: int = 1) -> str:
-            """Get next zodiac sign"""
-            signs = [
-                "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
-                "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
-            ]
-    
-            try:
-                current_index = signs.index(current_sign)
-                next_index = (current_index + steps) % 12
-                return signs[next_index]
-            except ValueError:
-                return "Taurus"  # Default fallback
 
     async def generate_astrology_chart_data(
         self,
