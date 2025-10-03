@@ -11,13 +11,17 @@ google-cloud-firestore>=2.13.1
 google-cloud-storage>=2.10.0
 
 # Data Validation and Settings
-pydantic>=2.5.0
+pydantic[email]>=2.5.0
 pydantic-settings>=2.1.0
+email-validator>=2.0.0
 
 # Authentication and Security
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 python-multipart>=0.0.6
+
+# Email validation (required for Pydantic email fields)
+email-validator>=2.0.0
 
 # HTTP and Utilities
 requests>=2.31.0
@@ -54,6 +58,10 @@ mypy==1.7.1
 pre-commit==3.5.0
 
 # Additional utilities for production
-gunicorn==21.2.0
-python-json-logger==2.0.7
-structlog==23.2.0
+gunicorn>=21.2.0
+python-json-logger>=2.0.7
+structlog>=23.2.0
+
+# Optional dependencies for enhanced functionality
+colorama>=0.4.6  # For colored terminal output
+python-dotenv>=1.0.0  # For environment variable loading
