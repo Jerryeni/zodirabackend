@@ -29,6 +29,7 @@ import uuid
 from google.cloud.firestore import FieldFilter
 from app.utils.astrology_utils import calculate_zodiac_sign, calculate_nakshatra, calculate_coordinates
 from app.core.security import validate_email, validate_phone_number, sanitize_input, create_access_token
+from app.services.enhanced_astrology_service import enhanced_astrology_service
 import httpx
 import secrets
 
@@ -193,6 +194,23 @@ class GoogleOAuthResponse(BaseModel):
 class LogoutResponse(BaseModel):
     """Response model for logout"""
     message: str
+class UserDetailsResponse(BaseModel):
+    """Comprehensive response model for user details with profile data"""
+    user_id: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    display_name: Optional[str] = None
+    subscription_type: str
+    profile_complete: bool
+    language: str
+    timezone: str
+    created_at: Optional[str] = None
+    last_login: Optional[str] = None
+    profiles: List[Dict[str, Any]]
+    recent_predictions: List[Dict[str, Any]]
+    summary: Dict[str, Any]
+
+# API Endpoints
 
 # API Endpoints
 @router.post("/initiate", response_model=AuthInitiateResponse)
@@ -335,8 +353,15 @@ async def google_callback(code: str, state: str, background_tasks: BackgroundTas
     """
     Handle the callback from Google OAuth.
     """
+    # Comprehensive logging for debugging
+    logger.info(f"🔐 GOOGLE OAUTH CALLBACK RECEIVED")
+    logger.info(f"🔍 Code parameter length: {len(code) if code else 0}")
+    logger.info(f"🔍 State parameter: {state}")
+    logger.info(f"🔍 Configured redirect_uri: {settings.redirect_uri}")
+    logger.info(f"🔍 Configured frontend_url: {settings.frontend_url}")
+
     # Here you should validate the 'state' parameter against what you stored
-    
+
     async with httpx.AsyncClient() as client:
         # Exchange authorization code for access token
         token_url = "https://oauth2.googleapis.com/token"
@@ -347,13 +372,34 @@ async def google_callback(code: str, state: str, background_tasks: BackgroundTas
             "redirect_uri": settings.redirect_uri,
             "grant_type": "authorization_code",
         }
-        
+
+        logger.info(f"🔄 Exchanging auth code for token...")
+        logger.info(f"🔄 Token request URL: {token_url}")
+        logger.info(f"🔄 Client ID: {settings.google_client_id[:20]}..." if settings.google_client_id else "MISSING")
+        logger.info(f"🔄 Redirect URI: {settings.redirect_uri}")
+
         token_response = await client.post(token_url, data=token_data)
-        
+
+        logger.info(f"🔄 Token response status: {token_response.status_code}")
         if token_response.status_code != 200:
-            logger.error(f"Failed to exchange Google auth code for token: {token_response.text}")
+            logger.error(f"❌ GOOGLE OAUTH ERROR: Failed to exchange auth code for token")
+            logger.error(f"❌ Response status: {token_response.status_code}")
+            logger.error(f"❌ Response body: {token_response.text}")
+            logger.error(f"❌ Request data sent: {token_data}")
+
+            # Check for specific OAuth errors
+            if "invalid_request" in token_response.text.lower():
+                logger.error("❌ INVALID REQUEST ERROR - Check redirect URI configuration in Google Cloud Console")
+            elif "invalid_client" in token_response.text.lower():
+                logger.error("❌ INVALID CLIENT ERROR - Check OAuth client configuration")
+            elif "unauthorized_client" in token_response.text.lower():
+                logger.error("❌ UNAUTHORIZED CLIENT ERROR - Check OAuth consent screen and scopes")
+
             # Redirect to frontend with an error
-            error_params = urlencode({"error": "google_auth_failed"})
+            error_params = urlencode({
+                "error": "google_auth_failed",
+                "details": f"Token exchange failed with status {token_response.status_code}"
+            })
             return RedirectResponse(url=f"{settings.frontend_url}/login?{error_params}")
             
         token_json = token_response.json()
@@ -362,20 +408,48 @@ async def google_callback(code: str, state: str, background_tasks: BackgroundTas
         # Fetch user information from Google
         userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
         headers = {"Authorization": f"Bearer {access_token}"}
+        logger.info(f"🔄 Fetching user info from Google...")
+        logger.info(f"🔄 Userinfo URL: {userinfo_url}")
+
         userinfo_response = await client.get(userinfo_url, headers=headers)
-        
+
+        logger.info(f"🔄 Userinfo response status: {userinfo_response.status_code}")
         if userinfo_response.status_code != 200:
-            logger.error(f"Failed to fetch user info from Google: {userinfo_response.text}")
-            error_params = urlencode({"error": "google_user_info_failed"})
+            logger.error(f"❌ GOOGLE OAUTH ERROR: Failed to fetch user info from Google")
+            logger.error(f"❌ Response status: {userinfo_response.status_code}")
+            logger.error(f"❌ Response body: {userinfo_response.text}")
+            logger.error(f"❌ Access token used: {access_token[:20]}..." if access_token else "MISSING")
+
+            error_params = urlencode({
+                "error": "google_user_info_failed",
+                "details": f"User info fetch failed with status {userinfo_response.status_code}"
+            })
             return RedirectResponse(url=f"{settings.frontend_url}/login?{error_params}")
 
         user_info = userinfo_response.json()
-        
+
+        logger.info(f"✅ Google user info fetched successfully")
+        logger.info(f"✅ User email: {user_info.get('email', 'N/A')}")
+        logger.info(f"✅ User name: {user_info.get('name', 'N/A')}")
+        logger.info(f"✅ User ID: {user_info.get('id', 'N/A')}")
+
         # Use a consistent service or function to handle user creation/login
-        result = await user_service.handle_google_user(user_info)
-        
+        logger.info(f"🔄 Processing Google user data...")
+        try:
+            result = await user_service.handle_google_user(user_info)
+        except Exception as e:
+            logger.error(f"❌ GOOGLE OAUTH ERROR: Failed to process Google user data")
+            logger.error(f"❌ Error: {str(e)}")
+            logger.error(f"❌ User info received: {user_info}")
+
+            error_params = urlencode({
+                "error": "google_user_processing_failed",
+                "details": f"User processing failed: {str(e)}"
+            })
+            return RedirectResponse(url=f"{settings.frontend_url}/login?{error_params}")
+
         # Log successful authentication
-        logger.info(f"Google authentication successful for user: {result['user_id']}")
+        logger.info(f"✅ Google authentication successful for user: {result['user_id']}")
         
         # Add background task for user analytics
         background_tasks.add_task(
@@ -419,6 +493,127 @@ async def logout(
         logger.error(f"Logout failed for user {current_user}: {e}")
         raise HTTPException(status_code=500, detail="Logout failed")
 
+@router.get("/user-details", response_model=UserDetailsResponse)
+async def get_user_details(current_user: str = Depends(get_current_user)):
+    """
+    Get comprehensive user details including all profile information and astrology data
+
+    This endpoint provides:
+    1. Complete user account information
+    2. All user profiles with birth details and astrology calculations
+    3. Recent predictions and insights
+    4. Summary of user's astrology journey
+    """
+    try:
+        logger.info(f"🔍 Fetching comprehensive user details for: {current_user}")
+
+        # Get user account information
+        db = get_firestore_client()
+        user_ref = db.collection('users').document(current_user)
+        user_doc = user_ref.get()
+
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user_data = user_doc.to_dict()
+
+        # Get all user profiles with enhanced astrology data
+        profiles_query = db.collection('person_profiles').where(filter=FieldFilter('user_id', '==', current_user)).where(filter=FieldFilter('is_active', '==', True))
+        profiles_docs = profiles_query.get()
+
+        enhanced_profiles = []
+        for doc in profiles_docs:
+            profile_data = doc.to_dict()
+
+            # Generate comprehensive astrology chart data
+            chart_data = await enhanced_astrology_service.generate_astrology_chart_data(
+                current_user, doc.id, profile_data
+            )
+
+            # Create enhanced profile with all details
+            enhanced_profile = {
+                "id": doc.id,
+                "name": profile_data.get('name'),
+                "birth_date": profile_data.get('birth_date'),
+                "birth_time": profile_data.get('birth_time'),
+                "birth_place": profile_data.get('birth_place'),
+                "gender": profile_data.get('gender'),
+                "relationship": profile_data.get('relationship', 'self'),
+                "created_at": profile_data.get('created_at'),
+                "updated_at": profile_data.get('updated_at'),
+                "is_active": profile_data.get('is_active', True),
+                # Astrology data
+                "zodiac_sign": profile_data.get('zodiac_sign'),
+                "moon_sign": profile_data.get('moon_sign'),
+                "nakshatra": profile_data.get('nakshatra'),
+                "ascendant": profile_data.get('ascendant'),
+                "varna": profile_data.get('varna'),
+                "guna": profile_data.get('guna'),
+                "element": profile_data.get('element'),
+                "modality": profile_data.get('modality'),
+                # Chart data
+                "chart_data": chart_data,
+                # Calculation metadata
+                "astrology_calculation_method": profile_data.get('astrology_calculation_method'),
+                "astrology_calculated_at": profile_data.get('astrology_calculated_at')
+            }
+            enhanced_profiles.append(enhanced_profile)
+
+        # Get recent predictions for all profiles
+        recent_predictions = []
+        for profile in enhanced_profiles:
+            predictions = await enhanced_astrology_service.get_predictions(current_user, profile['id'])
+            for pred in predictions[:2]:  # Get 2 most recent per profile
+                recent_predictions.append({
+                    "profile_id": pred.profile_id,
+                    "profile_name": profile['name'],
+                    "prediction_type": pred.prediction_type.value,
+                    "prediction_text": pred.prediction_text,
+                    "created_at": pred.created_at.isoformat() if hasattr(pred.created_at, 'isoformat') else str(pred.created_at),
+                    "expires_at": pred.expires_at.isoformat() if pred.expires_at and hasattr(pred.expires_at, 'isoformat') else str(pred.expires_at)
+                })
+
+        # Sort predictions by creation date (most recent first)
+        recent_predictions.sort(key=lambda x: x['created_at'], reverse=True)
+
+        # Create summary
+        total_predictions = sum(len(await enhanced_astrology_service.get_predictions(current_user, p['id'])) for p in enhanced_profiles)
+
+        summary = {
+            "total_profiles": len(enhanced_profiles),
+            "total_predictions": total_predictions,
+            "subscription_status": user_data.get('subscriptionType', 'free'),
+            "account_age_days": (datetime.utcnow() - user_data.get('createdAt')).days if user_data.get('createdAt') else 0,
+            "last_activity_days": (datetime.utcnow() - user_data.get('lastLoginAt')).days if user_data.get('lastLoginAt') else 0,
+            "astrology_calculation_method": "production_api"
+        }
+
+        # Compile comprehensive response
+        user_details = UserDetailsResponse(
+            user_id=current_user,
+            email=user_data.get('email'),
+            phone=user_data.get('phone'),
+            display_name=user_data.get('displayName'),
+            subscription_type=user_data.get('subscriptionType', 'free'),
+            profile_complete=user_data.get('profile_complete', False),
+            language=user_data.get('language', 'en'),
+            timezone=user_data.get('timezone', 'Asia/Kolkata'),
+            created_at=user_data.get('createdAt').isoformat() if user_data.get('createdAt') else None,
+            last_login=user_data.get('lastLoginAt').isoformat() if user_data.get('lastLoginAt') else None,
+            profiles=enhanced_profiles,
+            recent_predictions=recent_predictions[:10],  # Show 10 most recent
+            summary=summary
+        )
+
+        logger.info(f"✅ Successfully fetched comprehensive user details for: {current_user}")
+        return user_details.dict()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to fetch user details for {current_user}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch user details")
+
 @router.get("/session-status")
 async def get_session_status(
     session_id: str,
@@ -426,7 +621,7 @@ async def get_session_status(
 ):
     """
     Get current session status and user information
-    
+
     This endpoint provides information about the current authentication session
     """
     try:
@@ -436,7 +631,7 @@ async def get_session_status(
             "status": "authenticated",
             "session_id": session_id
         }
-        
+
     except Exception as e:
         logger.error(f"Session status check failed: {e}")
         raise HTTPException(status_code=500, detail="Session status check failed")
@@ -527,6 +722,8 @@ class ProfileStatusResponse(BaseModel):
     next_step: str
     profile_count: int
 
+# Removed duplicate UserDetailsResponse model definition
+
 
 
 
@@ -545,34 +742,115 @@ async def get_profiles(current_user: str = Depends(get_current_user)):
 
 from fastapi import Request
 
-# Helper function for astrology calculations
-async def calculate_astrology_data(birth_date, birth_time, birth_place):
-    """Calculate zodiac sign, nakshatra, rashi, etc. from birth details"""
-    # This is a placeholder - in production, integrate with astrology library
-    # For now, return mock data based on birth date
+# Production-ready dashboard endpoint
+@router.get("/dashboard", response_model=Dict[str, Any])
+async def get_user_dashboard(current_user: str = Depends(get_current_user)):
+    """
+    Get comprehensive user dashboard with all profile data and astrology calculations
 
-    day = birth_date.day
-    month = birth_date.month
+    This endpoint provides:
+    1. Complete user account information
+    2. All user profiles with birth details
+    3. Real astrology calculations for each profile
+    4. Chart data and predictions
+    5. Marriage compatibility data (if available)
+    """
+    try:
+        logger.info(f"📊 Generating dashboard for user: {current_user}")
 
-    # Simple zodiac calculation (mock)
-    zodiac_signs = [
-        "Capricorn", "Aquarius", "Pisces", "Aries", "Taurus", "Gemini",
-        "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius"
-    ]
-    zodiac_dates = [20, 19, 21, 20, 21, 21, 23, 23, 23, 23, 22, 22]
-    zodiac_index = month - 1 if day >= zodiac_dates[month - 1] else (month - 2) % 12
-    zodiac_sign = zodiac_signs[zodiac_index]
+        # Get user account information
+        db = get_firestore_client()
+        user_ref = db.collection('users').document(current_user)
+        user_doc = user_ref.get()
 
-    # Mock nakshatra and rashi (same as moon sign for simplicity)
-    nakshatra = f"Mock Nakshatra for {zodiac_sign}"
-    rashi = zodiac_sign
-    return {
-        'zodiac_sign': zodiac_sign,
-        'moon_sign': rashi,  # Rasi
-        'nakshatra': nakshatra,
-        'rashi': rashi,
-        'ascendant': "Sagittarius"  # Mock ascendant
-    }
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user_data = user_doc.to_dict()
+
+        # Get all user profiles
+        profiles_query = db.collection('person_profiles').where(filter=FieldFilter('user_id', '==', current_user)).where(filter=FieldFilter('is_active', '==', True))
+        profiles_docs = profiles_query.get()
+
+        profiles = []
+        for doc in profiles_docs:
+            profile_data = doc.to_dict()
+
+            # Generate comprehensive astrology chart for each profile
+            chart_data = await enhanced_astrology_service.generate_astrology_chart_data(
+                current_user, doc.id, profile_data
+            )
+
+            # Create enhanced profile with chart data
+            enhanced_profile = {
+                **profile_data,
+                'chart_data': chart_data,
+                'id': doc.id
+            }
+            profiles.append(enhanced_profile)
+
+        # Get recent predictions for all profiles
+        recent_predictions = []
+        for profile in profiles:
+            predictions = await enhanced_astrology_service.get_predictions(current_user, profile['id'])
+            recent_predictions.extend(predictions[:3])  # Get 3 most recent per profile
+
+        # Get marriage matches if available
+        marriage_matches = []
+        for profile in profiles:
+            matches = await enhanced_astrology_service.get_marriage_matches(current_user, profile['id'])
+            marriage_matches.extend(matches)
+
+        # Compile comprehensive dashboard data
+        dashboard_data = {
+            "user_info": {
+                "user_id": current_user,
+                "email": user_data.get('email'),
+                "phone": user_data.get('phone'),
+                "display_name": user_data.get('name'),
+                "subscription_type": user_data.get('subscriptionType', 'free'),
+                "profile_complete": user_data.get('profile_complete', False),
+                "created_at": user_data.get('createdAt'),
+                "last_login": user_data.get('lastLoginAt')
+            },
+            "profiles": profiles,
+            "summary": {
+                "total_profiles": len(profiles),
+                "total_predictions": len(recent_predictions),
+                "total_marriage_matches": len(marriage_matches),
+                "subscription_status": user_data.get('subscriptionType', 'free')
+            },
+            "recent_predictions": [
+                {
+                    "profile_id": pred.profile_id,
+                    "prediction_type": pred.prediction_type.value,
+                    "prediction_text": pred.prediction_text[:100] + "..." if len(pred.prediction_text) > 100 else pred.prediction_text,
+                    "created_at": pred.created_at,
+                    "expires_at": pred.expires_at
+                }
+                for pred in recent_predictions[:5]  # Show 5 most recent
+            ],
+            "marriage_matches": [
+                {
+                    "id": match.id,
+                    "overall_score": match.overall_score,
+                    "compatibility_level": match.compatibility_level,
+                    "created_at": match.created_at
+                }
+                for match in marriage_matches[:3]  # Show 3 most recent
+            ],
+            "generated_at": datetime.utcnow().isoformat(),
+            "astrology_calculation_method": "production_api"
+        }
+
+        logger.info(f"✅ Successfully generated dashboard for user: {current_user}")
+        return dashboard_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to generate dashboard for user {current_user}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate dashboard")
 
 @router.post("/profiles/new", response_model=ProfileResponse)
 @router.post("/profiles", response_model=ProfileResponse)
@@ -629,11 +907,29 @@ async def create_profile(profile_request: ProfileCreateRequest, request: Request
             'is_active': True,
         }
 
-        # Calculate astrology data
-        astrology_data = await calculate_astrology_data(
-            birth_date, birth_time, profile_request.birth_place
+        # Calculate comprehensive astrology data using production API
+        astrology_data = await enhanced_astrology_service.calculate_comprehensive_astrology(
+            profile_request.birth_date,
+            profile_request.birth_time,
+            profile_request.birth_place,
+            profile_request.gender
         )
-        profile_data.update(astrology_data)
+
+        # Add astrology data to profile
+        profile_data.update({
+            'zodiac_sign': astrology_data.get('zodiac_sign', 'Unknown'),
+            'moon_sign': astrology_data.get('moon_sign', 'Unknown'),
+            'nakshatra': astrology_data.get('nakshatra', 'Unknown'),
+            'ascendant': astrology_data.get('ascendant', 'Unknown'),
+            'varna': astrology_data.get('varna', 'Unknown'),
+            'guna': astrology_data.get('guna', 'Unknown'),
+            'element': astrology_data.get('element', 'Unknown'),
+            'modality': astrology_data.get('modality', 'Unknown'),
+            'astrology_calculation_method': astrology_data.get('calculation_method', 'api'),
+            'astrology_calculated_at': astrology_data.get('calculated_at'),
+            'planetary_positions': astrology_data.get('planetary_positions', {}),
+            'houses': astrology_data.get('houses', {})
+        })
 
         # Save profile to Firestore
         db.collection('person_profiles').document(profile_id).set(profile_data)
@@ -736,10 +1032,24 @@ async def update_profile(profile_id: str, profile: PersonProfile, current_user: 
         if (profile.birth_date != data.get('birth_date') or
             profile.birth_time != data.get('birth_time') or
             profile.birth_place != data.get('birth_place')):
-            astrology_data = await calculate_astrology_data(
-                profile.birth_date, profile.birth_time, profile.birth_place
+            astrology_data = await enhanced_astrology_service.calculate_comprehensive_astrology(
+                profile.birth_date,
+                profile.birth_time,
+                profile.birth_place,
+                profile.gender
             )
-            profile_data.update(astrology_data)
+            profile_data.update({
+                'zodiac_sign': astrology_data.get('zodiac_sign', 'Unknown'),
+                'moon_sign': astrology_data.get('moon_sign', 'Unknown'),
+                'nakshatra': astrology_data.get('nakshatra', 'Unknown'),
+                'ascendant': astrology_data.get('ascendant', 'Unknown'),
+                'varna': astrology_data.get('varna', 'Unknown'),
+                'guna': astrology_data.get('guna', 'Unknown'),
+                'element': astrology_data.get('element', 'Unknown'),
+                'modality': astrology_data.get('modality', 'Unknown'),
+                'astrology_calculation_method': astrology_data.get('calculation_method', 'api'),
+                'astrology_calculated_at': astrology_data.get('calculated_at'),
+            })
 
         doc_ref.update(profile_data)
         return ProfileResponse(**profile_data)

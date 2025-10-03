@@ -28,12 +28,13 @@ class AstrologyService:
 
     def __init__(self):
         self.free_astro_api_key = settings.free_astrology_api_key
+        # Updated API endpoints - using correct astrology API URLs
         self.api_endpoints = {
-            "rasi": "https://json.freeastrologyapi.com/planets",
-            "navamsa": "https://json.freeastrologyapi.com/navamsa-chart-info",
-            "d10": "https://json.freeastrologyapi.com/d10-chart-info",
-            "chandra": "https://json.freeastrologyapi.com/chandra-kundali-info",
-            "shadbala": "https://json.freeastrologyapi.com/shadbala/summary"
+            "rasi": "https://api.vedicastroapi.com/v3-json/horoscope/planets",
+            "navamsa": "https://api.vedicastroapi.com/v3-json/horoscope/navamsa-chart-info",
+            "d10": "https://api.vedicastroapi.com/v3-json/horoscope/d10-chart-info",
+            "chandra": "https://api.vedicastroapi.com/v3-json/horoscope/chandra-kundali-info",
+            "shadbala": "https://api.vedicastroapi.com/v3-json/horoscope/shadbala/summary"
         }
         self._db = None
         self._vimshottari_order = None
@@ -85,7 +86,8 @@ class AstrologyService:
                 chart_data.get("shadbala", {})
             )
 
-            # Create chart object
+            # Create chart object with proper datetime handling
+            current_time = datetime.utcnow()
             chart = AstrologyChart(
                 user_id=user_id,
                 profile_id=profile_id,
@@ -95,7 +97,10 @@ class AstrologyService:
                 health=structured_data["health"],
                 travel=structured_data["travel"],
                 vimshottari_dasha=vimshottari_dasha,
-                birth_details=birth_details
+                birth_details=birth_details,
+                created_at=current_time,
+                updated_at=current_time,
+                is_active=True
             )
 
             # Save to database
@@ -365,7 +370,16 @@ class AstrologyService:
 
             if doc.exists:
                 data = doc.to_dict()
-                return data.get('order', [])
+                order_data = data.get('order', [])
+                # Convert back to tuple format for internal use
+                if order_data and isinstance(order_data, list):
+                    if isinstance(order_data[0], dict):
+                        # New format: list of dicts
+                        return [(item['planet'], item['years']) for item in order_data]
+                    else:
+                        # Old format: list of tuples (for backward compatibility)
+                        return order_data
+                return []
             else:
                 # Initialize with default values
                 default_order = [
@@ -380,10 +394,15 @@ class AstrologyService:
                     ("Mercury", 17),
                 ]
 
+                # Convert to Firestore-compatible format (no nested arrays)
+                firestore_order = [
+                    {'planet': planet, 'years': years}
+                    for planet, years in default_order
+                ]
                 doc_ref.set({
-                    'order': default_order,
-                    'created_at': datetime.utcnow(),
-                    'updated_at': datetime.utcnow()
+                    'order': firestore_order,
+                    'created_at': datetime.utcnow().isoformat(),
+                    'updated_at': datetime.utcnow().isoformat()
                 })
 
                 logger.info("Initialized Vimshottari Dasha order in database")
@@ -392,7 +411,7 @@ class AstrologyService:
         except Exception as e:
             logger.error(f"Failed to get Vimshottari order from database: {e}")
             # Fallback to hardcoded values
-            return [
+            fallback_order = [
                 ("Ketu", 7),
                 ("Venus", 20),
                 ("Sun", 6),
@@ -403,6 +422,8 @@ class AstrologyService:
                 ("Saturn", 19),
                 ("Mercury", 17),
             ]
+            logger.info("Using fallback Vimshottari order")
+            return fallback_order
 
     async def _save_chart_to_db(self, chart: AstrologyChart) -> None:
         """
@@ -415,11 +436,95 @@ class AstrologyService:
             doc_id = f"{chart.user_id}_{chart.profile_id}"
             doc_ref = self.db.collection('astrology_charts').document(doc_id)
             chart.updated_at = datetime.utcnow()
-            doc_ref.set(chart.dict())
+
+            # Convert chart to dict with proper datetime handling
+            try:
+                if hasattr(chart, 'dict'):
+                    chart_dict = chart.dict()
+                else:
+                    chart_dict = chart.__dict__
+
+                # Convert datetime objects to strings with proper handling
+                def convert_datetime(obj):
+                    if isinstance(obj, datetime):
+                        return obj.isoformat()
+                    elif isinstance(obj, date):
+                        return obj.isoformat()
+                    elif isinstance(obj, time):
+                        return obj.isoformat()
+                    elif hasattr(obj, '__dict__'):
+                        # Handle nested objects properly
+                        if hasattr(obj, 'dict') and callable(getattr(obj, 'dict')):
+                            return convert_datetime(obj.dict())
+                        else:
+                            return convert_datetime(obj.__dict__)
+                    elif isinstance(obj, list):
+                        return [convert_datetime(item) for item in obj]
+                    elif isinstance(obj, dict):
+                        return {key: convert_datetime(value) for key, value in obj.items()}
+                    else:
+                        return obj
+
+                chart_dict = convert_datetime(chart_dict)
+                doc_ref.set(chart_dict)
+            except Exception as e:
+                logger.error(f"Failed to save chart to database: {e}")
+                # Save basic structure as fallback
+                doc_ref.set({
+                    'user_id': chart.user_id,
+                    'profile_id': chart.profile_id,
+                    'houses': {},
+                    'career': {},
+                    'finance': {},
+                    'health': {},
+                    'travel': {},
+                    'vimshottari_dasha': [],
+                    'created_at': datetime.utcnow().isoformat(),
+                    'updated_at': datetime.utcnow().isoformat(),
+                    'is_active': True
+                })
             logger.info(f"Saved astrology chart {doc_id} to database")
         except Exception as e:
             logger.error(f"Failed to save astrology chart to database: {e}")
             raise
+
+    def _chart_to_dict(self, chart: AstrologyChart) -> Dict[str, Any]:
+        """Convert AstrologyChart to dictionary with proper datetime handling"""
+        try:
+            chart_dict = chart.dict() if hasattr(chart, 'dict') else chart.__dict__
+
+            # Handle datetime serialization
+            def convert_datetime(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                elif isinstance(obj, date):
+                    return obj.isoformat()
+                elif isinstance(obj, time):
+                    return obj.isoformat()
+                elif hasattr(obj, '__dict__'):
+                    return self._chart_to_dict(obj)
+                elif isinstance(obj, list):
+                    return [convert_datetime(item) for item in obj]
+                elif isinstance(obj, dict):
+                    return {key: convert_datetime(value) for key, value in obj.items()}
+                else:
+                    return obj
+
+            return convert_datetime(chart_dict)
+        except Exception as e:
+            logger.error(f"Failed to convert chart to dict: {e}")
+            # Return basic structure as fallback
+            return {
+                'user_id': chart.user_id,
+                'profile_id': chart.profile_id,
+                'houses': {},
+                'career': {},
+                'finance': {},
+                'health': {},
+                'travel': {},
+                'vimshottari_dasha': [],
+                'updated_at': datetime.utcnow().isoformat()
+            }
 
 # Global service instance
 astrology_service = AstrologyService()

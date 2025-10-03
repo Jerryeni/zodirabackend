@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     # OpenAI ChatGPT Configuration
     openai_api_key: str = config('OPENAI_API_KEY', default='')
 
+    # OpenAI Model Configuration (Modern Best Practices)
+    openai_model: str = config('OPENAI_MODEL', default='gpt-3.5-turbo')
+    openai_max_tokens: int = config('OPENAI_MAX_TOKENS', default=2000, cast=int)
+    openai_temperature: float = config('OPENAI_TEMPERATURE', default=0.3, cast=float)
+    openai_timeout: int = config('OPENAI_TIMEOUT', default=30, cast=int)
+    openai_max_retries: int = config('OPENAI_MAX_RETRIES', default=3, cast=int)
+    openai_rate_limit_per_minute: int = config('OPENAI_RATE_LIMIT_PER_MINUTE', default=50, cast=int)
+
     # Redis Configuration (for caching)
     redis_url: str = config('REDIS_URL', default='redis://localhost:6379/0')
     
