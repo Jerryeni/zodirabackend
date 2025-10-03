@@ -673,7 +673,7 @@ class ChatGPTService:
         else:
             try:
                 # Instantiate the official OpenAI client
-                # Note: new SDK style: client = OpenAI(api_key=...)
+                # Use the correct API for the installed version
                 self.client = OpenAI(api_key=self.api_key)
                 logger.info("✅ OpenAI client initialized successfully")
             except Exception as e:
