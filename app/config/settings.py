@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     # Firebase Configuration
-    firebase_service_account_path: str = config('FIREBASE_SERVICE_ACCOUNT_PATH', default='config/serviceAccountKey.json')
     firebase_project_id: str = config('FIREBASE_PROJECT_ID', default='your-firebase-project-id')
     firebase_storage_bucket: str = config('FIREBASE_STORAGE_BUCKET', default='your-firebase-project-id.appspot.com')
 
