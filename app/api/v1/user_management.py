@@ -567,7 +567,7 @@ async def get_user_details(current_user: str = Depends(get_current_user)):
                 recent_predictions.append({
                     "profile_id": pred.profile_id,
                     "profile_name": profile['name'],
-                    "prediction_type": pred.prediction_type.value,
+                    "prediction_type": str(pred.prediction_type),
                     "prediction_text": pred.prediction_text,
                     "created_at": pred.created_at.isoformat() if hasattr(pred.created_at, 'isoformat') else str(pred.created_at),
                     "expires_at": pred.expires_at.isoformat() if pred.expires_at and hasattr(pred.expires_at, 'isoformat') else str(pred.expires_at)
@@ -823,7 +823,7 @@ async def get_user_dashboard(current_user: str = Depends(get_current_user)):
             "recent_predictions": [
                 {
                     "profile_id": pred.profile_id,
-                    "prediction_type": pred.prediction_type.value,
+                    "prediction_type": str(pred.prediction_type),
                     "prediction_text": pred.prediction_text[:100] + "..." if len(pred.prediction_text) > 100 else pred.prediction_text,
                     "created_at": pred.created_at,
                     "expires_at": pred.expires_at
