@@ -15,7 +15,7 @@ def initialize_firebase():
             "private_key_id": config('FIREBASE_PRIVATE_KEY_ID'),
             "private_key": config('FIREBASE_PRIVATE_KEY').replace('\\n', '\n'),
             "client_email": config('FIREBASE_CLIENT_EMAIL'),
-            "client_id": "107946647983112632991",
+            "client_id": config('FIREBASE_CLIENT_ID'),
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",

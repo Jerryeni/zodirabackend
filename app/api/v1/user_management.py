@@ -218,256 +218,34 @@ async def initiate_authentication(
     request: AuthInitiateRequest,
     background_tasks: BackgroundTasks
 ):
-    """
-    Initiate authentication process for email or phone number
-    
-    This endpoint:
-    1. Validates the identifier (email or phone)
-    2. Determines authentication type
-    3. Generates and sends OTP
-    4. Returns session information
-    """
-    try:
-        result = await user_service.initiate_auth(request.identifier)
-        
-        # Log authentication attempt (without sensitive data)
-        auth_type = "email" if validate_email(request.identifier) else "phone"
-
-        masked_identifier = _mask_identifier(request.identifier, auth_type)
-        logger.info(f"Authentication initiated for {auth_type}: {masked_identifier}")
-        
-        
-
-        return AuthInitiateResponse(**result)
-        
-    except ValidationError as e:
-        logger.warning(f"Validation error in auth initiation: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except AuthenticationError as e:
-        logger.warning(f"Authentication error in auth initiation: {e}")
-        raise HTTPException(status_code=401, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error in auth initiation: {e}")
-        raise HTTPException(status_code=500, detail="Authentication initiation failed")
+    """Deprecated: moved to /api/v1/auth/initiate"""
+    raise HTTPException(status_code=410, detail="This endpoint has moved to /api/v1/auth/initiate")
 
 @router.post("/verify-otp", response_model=AuthVerifyResponse)
 async def verify_otp(
     request: OTPVerifyRequest,
     background_tasks: BackgroundTasks
 ):
-    """
-    Verify OTP and complete authentication
-
-    This endpoint:
-    1. Validates the OTP against the session
-    2. Creates or retrieves user account
-    3. Optionally creates user profile if requested
-    4. Generates JWT access token
-    5. Determines next step in user flow
-    """
-    try:
-        result = await user_service.verify_otp(
-            request.session_id,
-            request.otp_code
-        )
-
-
-        # Log successful authentication
-        logger.info(f"OTP verification successful for user: {result['user_id']}")
-
-        # Add background task for user analytics
-        background_tasks.add_task(
-            _track_user_login,
-            result['user_id'],
-            result['is_new_user']
-        )
-
-        return AuthVerifyResponse(**result)
-
-    except AuthenticationError as e:
-        logger.warning(f"OTP verification failed: {e}")
-        raise HTTPException(status_code=401, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error in OTP verification: {e}")
-        raise HTTPException(status_code=500, detail="OTP verification failed")
+    """Deprecated: moved to /api/v1/auth/verify-otp"""
+    raise HTTPException(status_code=410, detail="This endpoint has moved to /api/v1/auth/verify-otp")
 
 @router.post("/google-oauth", response_model=GoogleOAuthResponse)
 async def google_oauth_login(
     request: GoogleOAuthRequest,
     background_tasks: BackgroundTasks
 ):
-    """
-    Handle Google OAuth authentication
-    
-    This endpoint:
-    1. Verifies Google ID token
-    2. Creates or retrieves user account
-    3. Generates JWT access token
-    4. Determines next step in user flow
-    """
-    try:
-        result = await user_service.google_oauth_login(request.id_token)
-        
-        # Log successful OAuth login
-        logger.info(f"Google OAuth login successful for user: {result['user_id']}")
-        
-        # Add background task for user analytics
-        background_tasks.add_task(
-            _track_user_login,
-            result['user_id'],
-            result['is_new_user']
-        )
-        
-        return GoogleOAuthResponse(**result)
-        
-    except AuthenticationError as e:
-        logger.warning(f"Google OAuth login failed: {e}")
-        raise HTTPException(status_code=401, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error in Google OAuth: {e}")
-        raise HTTPException(status_code=500, detail="Google OAuth login failed")
+    """Deprecated: moved to /api/v1/auth/google-oauth"""
+    raise HTTPException(status_code=410, detail="This endpoint has moved to /api/v1/auth/google-oauth")
         
 @router.get("/google/login")
 async def google_login():
-    """
-    Generate and return the Google login URL.
-    """
-    state = secrets.token_urlsafe(32)
-    # Store state in session or cache to validate in callback
-    # For now, we will assume a stateless approach and validate other params
-    
-    params = {
-        "client_id": settings.google_client_id,
-        "redirect_uri": settings.redirect_uri,
-        "response_type": "code",
-        "scope": "openid email profile",
-        "state": state,
-    }
-    
-    google_login_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-    
-    return {"url": google_login_url}
+    """Deprecated: moved to /api/v1/auth/google/login"""
+    raise HTTPException(status_code=410, detail="This endpoint has moved to /api/v1/auth/google/login")
 
 @router.get("/google/callback")
 async def google_callback(code: str, state: str, background_tasks: BackgroundTasks):
-    """
-    Handle the callback from Google OAuth.
-    """
-    # Comprehensive logging for debugging
-    logger.info(f"🔐 GOOGLE OAUTH CALLBACK RECEIVED")
-    logger.info(f"🔍 Code parameter length: {len(code) if code else 0}")
-    logger.info(f"🔍 State parameter: {state}")
-    logger.info(f"🔍 Configured redirect_uri: {settings.redirect_uri}")
-    logger.info(f"🔍 Configured frontend_url: {settings.frontend_url}")
-
-    # Here you should validate the 'state' parameter against what you stored
-
-    async with httpx.AsyncClient() as client:
-        # Exchange authorization code for access token
-        token_url = "https://oauth2.googleapis.com/token"
-        token_data = {
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "code": code,
-            "redirect_uri": settings.redirect_uri,
-            "grant_type": "authorization_code",
-        }
-
-        logger.info(f"🔄 Exchanging auth code for token...")
-        logger.info(f"🔄 Token request URL: {token_url}")
-        logger.info(f"🔄 Client ID: {settings.google_client_id[:20]}..." if settings.google_client_id else "MISSING")
-        logger.info(f"🔄 Redirect URI: {settings.redirect_uri}")
-
-        token_response = await client.post(token_url, data=token_data)
-
-        logger.info(f"🔄 Token response status: {token_response.status_code}")
-        if token_response.status_code != 200:
-            logger.error(f"❌ GOOGLE OAUTH ERROR: Failed to exchange auth code for token")
-            logger.error(f"❌ Response status: {token_response.status_code}")
-            logger.error(f"❌ Response body: {token_response.text}")
-            logger.error(f"❌ Request data sent: {token_data}")
-
-            # Check for specific OAuth errors
-            if "invalid_request" in token_response.text.lower():
-                logger.error("❌ INVALID REQUEST ERROR - Check redirect URI configuration in Google Cloud Console")
-            elif "invalid_client" in token_response.text.lower():
-                logger.error("❌ INVALID CLIENT ERROR - Check OAuth client configuration")
-            elif "unauthorized_client" in token_response.text.lower():
-                logger.error("❌ UNAUTHORIZED CLIENT ERROR - Check OAuth consent screen and scopes")
-
-            # Redirect to frontend with an error
-            error_params = urlencode({
-                "error": "google_auth_failed",
-                "details": f"Token exchange failed with status {token_response.status_code}"
-            })
-            return RedirectResponse(url=f"{settings.frontend_url}/login?{error_params}")
-            
-        token_json = token_response.json()
-        access_token = token_json.get("access_token")
-        
-        # Fetch user information from Google
-        userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
-        headers = {"Authorization": f"Bearer {access_token}"}
-        logger.info(f"🔄 Fetching user info from Google...")
-        logger.info(f"🔄 Userinfo URL: {userinfo_url}")
-
-        userinfo_response = await client.get(userinfo_url, headers=headers)
-
-        logger.info(f"🔄 Userinfo response status: {userinfo_response.status_code}")
-        if userinfo_response.status_code != 200:
-            logger.error(f"❌ GOOGLE OAUTH ERROR: Failed to fetch user info from Google")
-            logger.error(f"❌ Response status: {userinfo_response.status_code}")
-            logger.error(f"❌ Response body: {userinfo_response.text}")
-            logger.error(f"❌ Access token used: {access_token[:20]}..." if access_token else "MISSING")
-
-            error_params = urlencode({
-                "error": "google_user_info_failed",
-                "details": f"User info fetch failed with status {userinfo_response.status_code}"
-            })
-            return RedirectResponse(url=f"{settings.frontend_url}/login?{error_params}")
-
-        user_info = userinfo_response.json()
-
-        logger.info(f"✅ Google user info fetched successfully")
-        logger.info(f"✅ User email: {user_info.get('email', 'N/A')}")
-        logger.info(f"✅ User name: {user_info.get('name', 'N/A')}")
-        logger.info(f"✅ User ID: {user_info.get('id', 'N/A')}")
-
-        # Use a consistent service or function to handle user creation/login
-        logger.info(f"🔄 Processing Google user data...")
-        try:
-            result = await user_service.handle_google_user(user_info)
-        except Exception as e:
-            logger.error(f"❌ GOOGLE OAUTH ERROR: Failed to process Google user data")
-            logger.error(f"❌ Error: {str(e)}")
-            logger.error(f"❌ User info received: {user_info}")
-
-            error_params = urlencode({
-                "error": "google_user_processing_failed",
-                "details": f"User processing failed: {str(e)}"
-            })
-            return RedirectResponse(url=f"{settings.frontend_url}/login?{error_params}")
-
-        # Log successful authentication
-        logger.info(f"✅ Google authentication successful for user: {result['user_id']}")
-        
-        # Add background task for user analytics
-        background_tasks.add_task(
-            _track_user_login,
-            result['user_id'],
-            result['is_new_user']
-        )
-        
-        # Redirect to frontend with token and user data
-        response_params = {
-            "access_token": result["access_token"],
-            "user": json.dumps(result["user_data"]),
-            "is_new_user": result["is_new_user"],
-            "next_step": result["next_step"],
-        }
-        
-        redirect_url = f"{settings.frontend_url}/auth/google/success?{urlencode(response_params)}"
-        return RedirectResponse(url=redirect_url)
+    """Deprecated: moved to /api/v1/auth/google/callback"""
+    raise HTTPException(status_code=410, detail="This endpoint has moved to /api/v1/auth/google/callback")
 
 @router.post("/logout", response_model=LogoutResponse)
 async def logout(
@@ -693,22 +471,18 @@ async def _track_user_login(user_id: str, is_new_user: bool):
     except Exception as e:
         logger.error(f"User login tracking failed: {e}")
 
-# Health check endpoint for authentication service
+# Health check endpoint for authentication service (Redis removed)
 @router.get("/health")
 async def auth_health_check():
     """Health check endpoint for authentication service"""
     try:
-        # Check Redis connection
-        redis_status = "connected" if user_service.redis_client else "disconnected"
-        
         # Check Firebase connection (basic check)
         firebase_status = "connected"  # Assume connected if no exception
-        
+
         return {
             "status": "healthy",
-            "redis": redis_status,
             "firebase": firebase_status,
-            "timestamp": "2024-01-01T00:00:00Z"  # Use actual timestamp
+            "timestamp": datetime.utcnow().isoformat() + "Z"
         }
     except Exception as e:
         logger.error(f"Auth health check failed: {e}")

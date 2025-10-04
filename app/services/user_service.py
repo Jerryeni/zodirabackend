@@ -18,7 +18,6 @@ from typing import Dict, Any, Optional, Tuple, Union, List
 from enum import Enum
 
 import httpx
-import redis
 from firebase_admin import auth
 from google.oauth2 import id_token
 from google.auth.transport import requests
@@ -59,13 +58,14 @@ class UserService:
     """Unified user service handling authentication, profiles, and user management"""
     
     def __init__(self):
-        self.redis_client = self._init_redis()
+        # Redis removed; using Firestore-backed storage for sessions and rate limits
+        self.redis_client = None
         self._db = None  # Lazy initialization
         self.firebase_email = firebase_email_service
         self.rate_limit_window = 300  # 5 minutes
         self.max_otp_attempts = 3
         self.otp_expiry_minutes = 5
-        # Memory storage for development
+        # In-memory structures retained as a secondary fallback for development
         self._memory_sessions = {}
         self._rate_limits = {}
     
@@ -76,19 +76,8 @@ class UserService:
             self._db = get_firestore_client()
         return self._db
         
-    def _init_redis(self) -> Optional[redis.Redis]:
-        """Initialize Redis client for session management"""
-        try:
-            if hasattr(settings, 'redis_url') and settings.redis_url and settings.redis_url != 'redis://localhost:6379/0':
-                client = redis.from_url(settings.redis_url)
-                # Test connection
-                client.ping()
-                logger.info("Redis connected successfully")
-                return client
-            else:
-                logger.info("Redis not configured, using memory storage")
-        except Exception as e:
-            logger.warning(f"Redis connection failed, using memory storage: {e}")
+    def _init_redis(self) -> None:
+        """Deprecated: Redis removed. Using Firestore for session and rate-limit storage."""
         return None
     
     async def initiate_auth(self, identifier: str) -> Dict[str, Any]:
@@ -151,40 +140,50 @@ class UserService:
             raise ValidationError("Invalid email or phone number format")
     
     async def _check_rate_limit(self, identifier: str) -> None:
-        """Check rate limiting for authentication attempts"""
+        """Check rate limiting for authentication attempts using Firestore (fixed window)."""
         rate_limit_key = f"auth_rate_limit:{hash_sensitive_data(identifier)}"
-        
+        window_seconds = self.rate_limit_window
+        max_attempts = 5
+        now = datetime.utcnow()
+
         try:
-            if self.redis_client:
-                current_attempts = self.redis_client.get(rate_limit_key)
-                if current_attempts and int(current_attempts) >= 5:  # Max 5 attempts per 5 minutes
-                    raise AuthenticationError("Too many authentication attempts. Please try again later.")
-                
-                # Increment attempts
-                pipe = self.redis_client.pipeline()
-                pipe.incr(rate_limit_key)
-                pipe.expire(rate_limit_key, self.rate_limit_window)
-                pipe.execute()
-            else:
-                # Memory-based rate limiting for testing (simplified)
-                if not hasattr(self, '_rate_limits'):
-                    self._rate_limits = {}
-                
-                now = datetime.utcnow()
-                if rate_limit_key in self._rate_limits:
-                    attempts, last_attempt = self._rate_limits[rate_limit_key]
-                    if (now - last_attempt).seconds < self.rate_limit_window and attempts >= 5:
+            doc_ref = self.db.collection('rate_limits').document(rate_limit_key)
+            doc = doc_ref.get()
+            if doc.exists:
+                data = doc.to_dict() or {}
+                attempts = int(data.get('attempts', 0))
+                started_at = data.get('window_started_at')
+
+                # Normalize started_at to datetime
+                if isinstance(started_at, str):
+                    try:
+                        started_at = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+                    except Exception:
+                        started_at = None
+
+                within_window = False
+                if started_at:
+                    try:
+                        delta = (now - started_at).total_seconds()
+                        within_window = delta < window_seconds
+                    except Exception:
+                        within_window = False
+
+                if within_window:
+                    if attempts >= max_attempts:
                         raise AuthenticationError("Too many authentication attempts. Please try again later.")
-                    elif (now - last_attempt).seconds >= self.rate_limit_window:
-                        self._rate_limits[rate_limit_key] = (1, now)
-                    else:
-                        self._rate_limits[rate_limit_key] = (attempts + 1, now)
+                    # Increment attempts
+                    doc_ref.update({'attempts': attempts + 1})
                 else:
-                    self._rate_limits[rate_limit_key] = (1, now)
+                    # Start a new window
+                    doc_ref.set({'attempts': 1, 'window_started_at': now}, merge=True)
+            else:
+                # First attempt
+                doc_ref.set({'attempts': 1, 'window_started_at': now})
         except AuthenticationError:
             raise
         except Exception as e:
-            logger.warning(f"Rate limiting failed, allowing request: {e}")
+            logger.warning(f"Rate limiting check failed, allowing request: {e}")
             # Allow request to proceed if rate limiting fails
     
     async def _initiate_email_auth(self, email: str, session_id: str, session_data: Dict) -> Dict[str, Any]:
@@ -725,55 +724,47 @@ class UserService:
             raise AuthenticationError(f"Logout failed: {str(e)}")
     
     async def _store_session(self, session_id: str, session_data: Dict) -> None:
-        """Store session data"""
+        """Store session data in Firestore with in-memory fallback for development."""
         try:
-            if self.redis_client:
-                self.redis_client.setex(
-                    f"auth_session:{session_id}",
-                    self.otp_expiry_minutes * 60,
-                    json.dumps(session_data, default=str)
-                )
-                logger.debug(f"Session stored in Redis: {session_id}")
-            else:
-                # Fallback to in-memory storage for testing
-                if not hasattr(self, '_memory_sessions'):
-                    self._memory_sessions = {}
-                self._memory_sessions[session_id] = session_data
-                logger.debug(f"Session stored in memory: {session_id}")
+            doc_ref = self.db.collection('auth_sessions').document(session_id)
+            # Store as-is; verify_otp handles expires_at parsing
+            doc_ref.set(session_data)
+            logger.debug(f"Session stored in Firestore: {session_id}")
         except Exception as e:
             logger.warning(f"Session storage failed, using memory fallback: {e}")
-            # Fallback to memory storage
             if not hasattr(self, '_memory_sessions'):
                 self._memory_sessions = {}
             self._memory_sessions[session_id] = session_data
     
     async def _get_session(self, session_id: str) -> Optional[Dict]:
-        """Retrieve session data"""
+        """Retrieve session data from Firestore with in-memory fallback."""
         try:
-            if self.redis_client:
-                session_data = self.redis_client.get(f"auth_session:{session_id}")
-                if session_data:
-                    return json.loads(session_data)
-            else:
-                # Fallback to in-memory storage
-                if hasattr(self, '_memory_sessions'):
-                    return self._memory_sessions.get(session_id)
+            doc = self.db.collection('auth_sessions').document(session_id).get()
+            if doc.exists:
+                data = doc.to_dict()
+                return data
+            # Fallback to in-memory storage
+            if hasattr(self, '_memory_sessions'):
+                return self._memory_sessions.get(session_id)
             return None
         except Exception as e:
             logger.error(f"Session retrieval failed: {e}")
+            # Fallback to in-memory storage on error
+            if hasattr(self, '_memory_sessions'):
+                return self._memory_sessions.get(session_id)
             return None
     
     async def _delete_session(self, session_id: str) -> None:
-        """Delete session data"""
+        """Delete session data from Firestore and in-memory fallback."""
         try:
-            if self.redis_client:
-                self.redis_client.delete(f"auth_session:{session_id}")
-            else:
-                # Fallback to in-memory storage
-                if hasattr(self, '_memory_sessions'):
-                    self._memory_sessions.pop(session_id, None)
+            self.db.collection('auth_sessions').document(session_id).delete()
+            # Also clear from memory fallback if present
+            if hasattr(self, '_memory_sessions'):
+                self._memory_sessions.pop(session_id, None)
         except Exception as e:
             logger.error(f"Session deletion failed: {e}")
+            if hasattr(self, '_memory_sessions'):
+                self._memory_sessions.pop(session_id, None)
 
     async def create_persistent_session(self, user_id: str, session_duration_days: int = 30) -> Dict[str, Any]:
         """

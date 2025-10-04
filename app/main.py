@@ -11,7 +11,7 @@ from prometheus_client import generate_latest
 from app.config.firebase import initialize_firebase
 from app.config.settings import settings
 from app.api.v1.user_management import router as user_management_router
-from app.api.v1.auth import router as auth_router
+from app.api.v1.unified_auth import router as unified_auth_router
 from app.api.v1.health import router as health_router
 from app.api.v1.astrology import router as astrology_router
 from app.api.v1.enhanced_astrology import router as enhanced_astrology_router
@@ -75,7 +75,7 @@ logger.info(f"CORS configured successfully for {settings.environment} environmen
 
 # Include API routers
 app.include_router(health_router, prefix="/api/v1", tags=["health"])
-app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
+app.include_router(unified_auth_router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(user_management_router, prefix="/api/v1/users", tags=["User Management"])
 app.include_router(astrology_router, prefix="/api/v1/astrology", tags=["Astrology"])
 app.include_router(enhanced_astrology_router, prefix="/api/v1/enhanced", tags=["Enhanced Astrology"])

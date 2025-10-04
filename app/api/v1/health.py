@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from app.config.firebase import get_firestore_client
+from app.config.settings import settings
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,8 +17,9 @@ async def health_check():
         return {
             "status": "healthy",
             "database": "connected",
-            "timestamp": "2024-01-01T00:00:00Z",
-            "version": "1.0.0"
+            "firebase": "connected",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "version": settings.app_version
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")

@@ -31,140 +31,56 @@ class FirebaseEmailService:
         # SMTP Configuration
         self.smtp_server = os.getenv('FIREBASE_SMTP_SERVER', 'smtp.gmail.com')
         self.smtp_port = int(os.getenv('FIREBASE_SMTP_PORT', '465'))
+        use_ssl_str = os.getenv('FIREBASE_SMTP_USE_SSL', 'true')
+        self.smtp_use_ssl = str(use_ssl_str).lower() in ('1', 'true', 'yes')
         self.email_user = os.getenv('FIREBASE_EMAIL_USER', settings.zodira_support_email)
         self.email_password = os.getenv('FIREBASE_EMAIL_PASSWORD', '')
-        self.email_user = "enijerry0@gmail.com"
-        self.email_password = "Eyong080637#"
         # Email templates
         self.from_name = "ZODIRA Support"
         self.from_email = self.email_user
-        
+
         logger.info(f"Firebase Email Service initialized")
-        logger.info(f"SMTP Server: {self.smtp_server}:{self.smtp_port}")
+        logger.info(f"SMTP Server: {self.smtp_server}:{self.smtp_port} (SSL: {self.smtp_use_ssl})")
         logger.info(f"From Email: {self.from_email}")
     
 
     async def send_otp_email(self, to_email: str, otp_code: str) -> bool:
-        SMTP_SERVER = "smtp.gmail.com"
-        SMTP_PORT = 587  # use 465 for SSL
-        GMAIL_USER = "enijerry0@gmail.com"
-        APP_PASSWORD = "lasv scir ocxj uric"#ß.replace(" ", "")  # your 16-char App Password
+        """
+        Send OTP email using configured SMTP settings.
+        Returns True on success, False on failure.
+        """
+        try:
+            if not self.email_user or not self.email_password:
+                logger.warning("SMTP not configured (FIREBASE_EMAIL_USER/PASSWORD missing)")
+                return False
 
-        msg = EmailMessage()
-        msg["From"] = GMAIL_USER
-        msg["To"] = to_email
-        msg["Subject"] = "Your ZODIRA Verification Code"
-        msg.set_content(otp_code)
-        
-        # Create HTML and text versions
-        text_body = self._create_text_otp_email(otp_code)
-        html_body = self._create_html_otp_email(otp_code)
-        
-      
+            msg = EmailMessage()
+            msg["From"] = f"{self.from_name} <{self.from_email}>"
+            msg["To"] = to_email
+            msg["Subject"] = "Your ZODIRA Verification Code"
 
-        msg.set_content(text_body)                   # plain text
-        msg.add_alternative(html_body, subtype="html") 
+            # Compose message
+            text_body = self._create_text_otp_email(otp_code)
+            html_body = self._create_html_otp_email(otp_code)
+            msg.set_content(text_body)
+            msg.add_alternative(html_body, subtype="html")
 
-        # print("Email sent!")
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.set_debuglevel(1)
-            smtp.login(GMAIL_USER, APP_PASSWORD)
-            smtp.send_message(msg)
+            if self.smtp_use_ssl:
+                with smtplib.SMTP_SSL(self.smtp_server, self.smtp_port) as smtp:
+                    smtp.login(self.email_user, self.email_password)
+                    smtp.send_message(msg)
+            else:
+                with smtplib.SMTP(self.smtp_server, self.smtp_port) as smtp:
+                    smtp.ehlo()
+                    smtp.starttls()
+                    smtp.login(self.email_user, self.email_password)
+                    smtp.send_message(msg)
 
-
-    # async def send_otp_email(self, to_email: str, otp_code: str) -> bool:
-        # """
-        # Send OTP email with comprehensive debugging and visibility
-        
-        # Args:
-        #     to_email: Recipient email address
-        #     otp_code: 6-digit OTP code
-            
-        # Returns:
-        #     bool: True if email sent successfully, False otherwise
-        # """
-        # try:
-        #     # Enhanced debugging
-        #     logger.info(f"🔍 DEBUG: Preparing to send OTP email")
-        #     logger.info(f"🔍 DEBUG: To Email: {to_email}")
-        #     logger.info(f"🔍 DEBUG: OTP Code: {otp_code}")
-        #     logger.info(f"🔍 DEBUG: SMTP Server: {self.smtp_server}")
-        #     logger.info(f"🔍 DEBUG: From Email: {self.from_email}")
-            
-        #     # Create email message
-        #     msg = MIMEMultipart('alternative')
-        #     msg['From'] = f"{self.from_name} <{self.from_email}>"
-        #     msg['To'] = to_email
-        #     msg['Subject'] = "Your ZODIRA Verification Code"
-            
-        #     # Create HTML and text versions
-        #     text_body = self._create_text_otp_email(otp_code)
-        #     html_body = self._create_html_otp_email(otp_code)
-            
-        #     # Attach both versions
-        #     text_part = MIMEText(text_body, 'plain')
-        #     html_part = MIMEText(html_body, 'html')
-            
-        #     msg.attach(text_part)
-        #     msg.attach(html_part)
-            
-        #     # Enhanced console output for testing
-        #     print(f"\n" + "="*70)
-        #     print(f"📧 FIREBASE EMAIL OTP DELIVERY")
-        #     print(f"📧 To: {to_email}")
-        #     print(f"📧 From: {self.from_email}")
-        #     print(f"📧 OTP Code: {otp_code}")
-        #     print(f"📧 Subject: Your ZODIRA Verification Code")
-        #     print(f"📧 SMTP: {self.smtp_server}:{self.smtp_port}")
-        #     print("="*70)
-            
-        #     # Attempt to send email
-        #     if self.email_user and self.email_password:
-        #         try:
-        #             logger.info(f"🔍 DEBUG: Connecting to SMTP server")
-        #             print("Attempt to login to SMTP server...   1")
-        #             server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-        #             server.starttls()
-                    
-        #             logger.info(f"🔍 DEBUG: Logging into SMTP server")
-        #             print("Attempt to login to SMTP server...   ")
-        #             server.login("enijerry0@gmail.com","Eyong080637#")#(self.email_user, self.email_password)
-        #             print("Login successful")
-        #             logger.info(f"🔍 DEBUG: Sending email")
-        #             text = msg.as_string()
-        #             server.sendmail(self.from_email, to_email, text)
-        #             server.quit()
-                    
-        #             logger.info(f"✅ OTP email sent successfully to {to_email}")
-        #             print(f"✅ EMAIL SENT SUCCESSFULLY via SMTP")
-        #             print(f"📧 OTP Code: {otp_code}")
-        #             print(f"📧 Check your email: {to_email}\n")
-                    
-        #             return True
-                    
-        #         except Exception as smtp_error:
-        #             print("Exception occurred while sending email:", smtp_error)
-        #             logger.error(f"❌ SMTP sending failed: {smtp_error}")
-        #             print(f"❌ SMTP SEND FAILED: {smtp_error}")
-        #             print(f"📧 DEVELOPMENT OTP: {otp_code}")
-        #             print(f"📧 Use this OTP for testing: {otp_code}\n")
-        #             return False
-        #     else:
-        #         # No SMTP credentials - development mode
-        #         logger.warning("No SMTP credentials configured - development mode")
-        #         print(f"⚠️ NO SMTP CONFIGURED - DEVELOPMENT MODE")
-        #         print(f"📧 EMAIL OTP CODE: {otp_code}")
-        #         print(f"📧 Recipient: {to_email}")
-        #         print(f"📧 Use this OTP for testing: {otp_code}\n")
-        #         return True  # Return true for development testing
-                
-        # except Exception as e:
-        #     print("Exception occurred while sending email:", e)
-        #     logger.error(f"❌ Email OTP delivery failed for {to_email}: {e}")
-        #     print(f"❌ EMAIL DELIVERY FAILED: {e}")
-        #     print(f"📧 FALLBACK OTP: {otp_code}")
-        #     print(f"📧 Use this OTP for testing: {otp_code}\n")
-        #     return False
+            logger.info(f"OTP email sent to {to_email}")
+            return True
+        except Exception as e:
+            logger.error(f"OTP email delivery failed for {to_email}: {e}")
+            return False
     
     def _create_text_otp_email(self, otp_code: str) -> str:
         """Create plain text OTP email"""

@@ -18,7 +18,7 @@ pwd_context = CryptContext(
     bcrypt__rounds=12  # Increased rounds for better security
 )
 
-# Token blacklist (in production, use Redis)
+# Token blacklist (for production, persist in a datastore such as Firestore)
 _token_blacklist: Set[str] = set()
 
 class TokenData(BaseModel):

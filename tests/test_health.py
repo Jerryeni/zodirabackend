@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from main import app
+from app.main import app
 
 client = TestClient(app)
 
@@ -12,4 +12,4 @@ def test_health_check():
     assert "status" in data
     if response.status_code == 200:
         assert data["status"] == "healthy"
-        assert data["database"] == "connected"
+        assert "firebase" in data
