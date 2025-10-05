@@ -197,8 +197,8 @@ class UserService:
             # Store session
             await self._store_session(session_id, session_data)
             
-            # Send email OTP (implement email service)
-            await self._send_email_otp(email, otp_code)
+            # Send email OTP (fire-and-forget to minimize latency)
+            asyncio.create_task(self._send_email_otp(email, otp_code))
             
             return {
                 'session_id': session_id,

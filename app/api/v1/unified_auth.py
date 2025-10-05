@@ -144,6 +144,10 @@ async def verify_otp(request: OTPVerifyRequest, background_tasks: BackgroundTask
 @router.post("/google-oauth", response_model=GoogleOAuthResponse)
 async def google_oauth_login(request: GoogleOAuthRequest, background_tasks: BackgroundTasks):
     try:
+        # Guard: Only allow when Google OAuth is configured
+        if not settings.google_client_id or not settings.google_client_secret:
+            raise HTTPException(status_code=503, detail="Google OAuth not configured")
+
         result = await user_service.google_oauth_login(request.id_token)
         logger.info(f"Google OAuth login successful for user: {result['user_id']}")
         background_tasks.add_task(_track_user_login, result['user_id'], result['is_new_user'])
@@ -151,12 +155,18 @@ async def google_oauth_login(request: GoogleOAuthRequest, background_tasks: Back
     except AuthenticationError as e:
         logger.warning(f"Google OAuth login failed: {e}")
         raise HTTPException(status_code=401, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected error in Google OAuth: {e}")
         raise HTTPException(status_code=500, detail="Google OAuth login failed")
 
 @router.get("/google/login")
 async def google_login():
+    # Guard: Only expose login URL when configured
+    if not settings.google_client_id or not settings.redirect_uri:
+        raise HTTPException(status_code=503, detail="Google OAuth not configured")
+
     state = secrets.token_urlsafe(32)
     params = {
         "client_id": settings.google_client_id,
@@ -170,6 +180,10 @@ async def google_login():
 
 @router.get("/google/callback")
 async def google_callback(code: str, state: str, background_tasks: BackgroundTasks):
+    # Guard: Only process callback when configured
+    if not settings.google_client_id or not settings.google_client_secret or not settings.redirect_uri:
+        raise HTTPException(status_code=503, detail="Google OAuth not configured")
+
     logger.info(f"GOOGLE OAUTH CALLBACK: code_len={len(code) if code else 0}, state={state}")
     logger.info(f"Configured redirect_uri: {settings.redirect_uri}")
     logger.info(f"Configured frontend_url: {settings.frontend_url}")

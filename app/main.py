@@ -7,6 +7,10 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from prometheus_client import generate_latest
 
+# Ensure .env is loaded regardless of current working directory
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=(Path(__file__).resolve().parent.parent / ".env"), override=False)
 # Import from new structure
 from app.config.firebase import initialize_firebase
 from app.config.settings import settings

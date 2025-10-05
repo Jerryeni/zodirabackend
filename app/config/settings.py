@@ -42,10 +42,10 @@ class Settings(BaseSettings):
     mydreams_sender_id: str = config('MYDREAMS_SENDER_ID', default='MYDTEH')
     
     # Google OAuth Configuration
-    google_client_id: str = config('GOOGLE_CLIENT_ID')
-    google_client_secret: str = config('GOOGLE_CLIENT_SECRET')
-    redirect_uri: str = config('REDIRECT_URI')
-    frontend_url: str = "*"
+    google_client_id: str = config('GOOGLE_CLIENT_ID', default='')
+    google_client_secret: str = config('GOOGLE_CLIENT_SECRET', default='')
+    redirect_uri: str = config('REDIRECT_URI', default='')
+    frontend_url: str = config('FRONTEND_URL', default='*')
 
     # Twilio Configuration (fallback)
     twilio_account_sid: str = config('TWILIO_ACCOUNT_SID', default='')
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     twilio_phone_number: str = config('TWILIO_PHONE_NUMBER', default='')
     
     # Application Contact Information
-    zodira_support_email: str = config('ZODIRA_SUPPORT_EMAIL', default='support@zodira.app')
+    zodira_support_email: str = config('ZODIRA_SUPPORT_EMAIL', default='enijerry0@gmail.com')
 
     # Astrology API Configuration
     free_astrology_api_key: str = config('FREE_ASTRO_API_KEY', default='')
@@ -102,6 +102,10 @@ class Settings(BaseSettings):
         # Validate CORS origins
         if '*' in self.allowed_origins:
             logger.info("Wildcard CORS origin enabled for all environments")
+        
+        # Google OAuth optional: keep app running even if not configured
+        if not self.google_client_id or not self.google_client_secret or not self.redirect_uri:
+            logger.info("Google OAuth not fully configured; endpoints relying on Google OAuth will be inactive until GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/REDIRECT_URI are set")
 
     class Config:
         env_file = ".env"
