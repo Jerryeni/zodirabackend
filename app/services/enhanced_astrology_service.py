@@ -38,6 +38,7 @@ class EnhancedAstrologyService:
         self._db = None
         self.openai_api_key = settings.openai_api_key
         self.free_astrology_api_key = settings.free_astrology_api_key
+        self.astro_api_key = getattr(settings, "astro_api_key", "")
         self._api_cache = {}  # Simple in-memory cache for API responses
 
     @property
@@ -742,33 +743,77 @@ class EnhancedAstrologyService:
                 return 5.5 if isinstance(tz, str) and tz.lower() in ("asia/kolkata", "asia/calcutta") else 0.0
 
             timezone_offset = _tz_offset(api_data.get("timezone"))
-
+ 
+            # Pick AstroAPI key (separate from FREE_ASTRO_API_KEY)
+            astro_key = getattr(self, "astro_api_key", None)
+            if not astro_key:
+                logger.warning("⚠️ ASTRO_API_KEY not configured; AstroAPI calls may return 403")
+ 
             # Try multiple API endpoints with correct request formats
             api_configs = [
+                # VedicAstro API (expects original api_data shape)
                 {
                     "url": "https://api.vedicastroapi.com/v3-json/horoscope/planets",
                     "headers": {"x-api-key": self.free_astrology_api_key, "Content-Type": "application/json"},
                     "payload": api_data
                 },
+                # FreeAstrology API - try multiple payload variants to satisfy schema
                 {
                     "url": "https://json.freeastrologyapi.com/planets",
                     "headers": {"x-api-key": self.free_astrology_api_key, "Content-Type": "application/json"},
-                    "payload": {
-                        "year": year,
-                        "month": month,
-                        "date": day,
-                        "hour": hour,
-                        "minute": minute,
-                        "seconds": 0,
-                        "latitude": float(api_data.get("latitude", 0)),
-                        "longitude": float(api_data.get("longitude", 0)),
-                        "timezone": timezone_offset,
-                        "settings": api_data.get("settings", {})
-                    }
+                    "payloads": [
+                        # Variant A: hour/minute + numeric timezone (preferred)
+                        {
+                            "year": year,
+                            "month": month,
+                            "date": day,
+                            "hour": hour,
+                            "minute": minute,
+                            "seconds": 0,
+                            "latitude": float(api_data.get("latitude", 0)),
+                            "longitude": float(api_data.get("longitude", 0)),
+                            "timezone": timezone_offset
+                        },
+                        # Variant B: hours/minutes + numeric timezone (alternate key names)
+                        {
+                            "year": year,
+                            "month": month,
+                            "date": day,
+                            "hours": hour,
+                            "minutes": minute,
+                            "seconds": 0,
+                            "latitude": float(api_data.get("latitude", 0)),
+                            "longitude": float(api_data.get("longitude", 0)),
+                            "timezone": timezone_offset
+                        },
+                        # Variant C: hour/minute + IANA timezone string (fallback)
+                        {
+                            "year": year,
+                            "month": month,
+                            "date": day,
+                            "hour": hour,
+                            "minute": minute,
+                            "seconds": 0,
+                            "latitude": float(api_data.get("latitude", 0)),
+                            "longitude": float(api_data.get("longitude", 0)),
+                            "timezone": api_data.get("timezone", "Asia/Kolkata")
+                        }
+                    ]
+                },
+                # AstroAPI - try multiple auth header styles
+                {
+                    "url": "https://api.astroapi.com/v1/planets",
+                    "headers": {"x-api-key": astro_key, "Content-Type": "application/json"},
+                    "payload": api_data
                 },
                 {
                     "url": "https://api.astroapi.com/v1/planets",
-                    "headers": {"x-api-key": self.free_astrology_api_key, "Content-Type": "application/json"},
+                    "headers": {"Authorization": f"Bearer {astro_key}", "Content-Type": "application/json"},
+                    "payload": api_data
+                },
+                {
+                    "url": "https://api.astroapi.com/v1/planets",
+                    "headers": {"apikey": astro_key, "Content-Type": "application/json"},
                     "payload": api_data
                 }
             ]
@@ -777,29 +822,46 @@ class EnhancedAstrologyService:
                 try:
                     async with httpx.AsyncClient(timeout=15.0) as client:
                         logger.info(f"🔮 Calling astrology API: {config['url']}")
-
-                        # Remove None values from payload
-                        payload = {k: v for k, v in config["payload"].items() if v is not None}
-
-                        response = await client.post(config["url"], json=payload, headers=config["headers"])
-
-                        if response.status_code == 200:
-                            data = response.json()
-                            logger.info("✅ Astrology API call successful")
-                            return data
-                        elif response.status_code == 404:
-                            logger.warning(f"⚠️ API endpoint not found: {config['url']}")
-                            continue
-                        elif response.status_code == 403:
-                            logger.warning(f"⚠️ API access forbidden: {config['url']}")
-                            continue
-                        elif response.status_code == 400:
-                            logger.warning(f"⚠️ API bad request {response.status_code}: {response.text}")
-                            continue
+    
+                        # Support single or multiple payload variants
+                        payload_candidates = []
+                        if "payloads" in config:
+                            payload_candidates = config["payloads"]
                         else:
+                            payload_candidates = [config.get("payload", {})]
+    
+                        for candidate in payload_candidates:
+                            # Remove None values from candidate payload
+                            payload = {k: v for k, v in candidate.items() if v is not None}
+                            try:
+                                keys = sorted(list(payload.keys()))
+                            except Exception:
+                                keys = list(payload.keys())
+                            logger.info(f"🔧 Payload keys for {config['url']}: {keys}")
+    
+                            response = await client.post(config["url"], json=payload, headers=config["headers"])
+    
+                            if response.status_code == 200:
+                                data = response.json()
+                                logger.info("✅ Astrology API call successful")
+                                return data
+                            if response.status_code == 400:
+                                logger.warning(f"⚠️ API bad request 400: {response.text}")
+                                # try next variant (if any)
+                                continue
+                            if response.status_code == 404:
+                                logger.warning(f"⚠️ API endpoint not found: {config['url']}")
+                                # No point trying more variants for this URL
+                                break
+                            if response.status_code == 403:
+                                logger.warning(f"⚠️ API access forbidden: {config['url']}")
+                                # Auth style likely wrong or key invalid; move on to next config
+                                break
+    
                             logger.warning(f"⚠️ API error {response.status_code}: {response.text}")
-                            continue
-
+                            # Unknown error for this URL; move on to next config
+                            break
+    
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to call {config['url']}: {e}")
                     continue
@@ -831,7 +893,7 @@ class EnhancedAstrologyService:
                 enhanced["houses"] = api_data["houses"]
 
             # Calculate additional Vedic astrology elements
-            enhanced.update(self._calculate_vedic_elements(api_data))
+            enhanced.update(self._calculate_vedic_elements(api_data, gender))
 
             # Calculate Western astrology elements
             enhanced.update(self._calculate_western_elements(api_data))
@@ -847,7 +909,7 @@ class EnhancedAstrologyService:
                 "calculated_at": datetime.utcnow().isoformat()
             }
 
-    def _calculate_vedic_elements(self, api_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _calculate_vedic_elements(self, api_data: Dict[str, Any], gender: str = "male") -> Dict[str, Any]:
         """Calculate Vedic astrology elements"""
         vedic = {}
 

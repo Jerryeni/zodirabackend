@@ -57,6 +57,7 @@ class Settings(BaseSettings):
 
     # Astrology API Configuration
     free_astrology_api_key: str = config('FREE_ASTRO_API_KEY', default='')
+    astro_api_key: str = config('ASTRO_API_KEY', default='')
 
     # OpenAI ChatGPT Configuration
     openai_api_key: str = config('OPENAI_API_KEY', default='')
