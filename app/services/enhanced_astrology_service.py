@@ -691,6 +691,58 @@ class EnhancedAstrologyService:
                 logger.warning("⚠️ FREE_ASTRO_API_KEY not configured, using fallback calculations")
                 return None
 
+            # Normalize parts for FreeAstrologyAPI (expects hour/minute and numeric timezone)
+            date_str = api_data.get("date")
+            time_str = api_data.get("time")
+            year = month = day = hour = minute = None
+            if isinstance(date_str, str) and "-" in date_str:
+                try:
+                    y, m, d = date_str.split("-")[0:3]
+                    year = int(y)
+                    month = int(m)
+                    day = int(d)
+                except Exception:
+                    pass
+            if isinstance(time_str, str) and ":" in time_str:
+                try:
+                    hh, mm = time_str.split(":")[0:2]
+                    hour = int(hh)
+                    minute = int(mm)
+                except Exception:
+                    pass
+
+            def _tz_offset(tz):
+                try:
+                    if isinstance(tz, (int, float)):
+                        return float(tz)
+                    if isinstance(tz, str):
+                        s = tz.strip()
+                        lower = s.lower()
+                        if lower in ("asia/kolkata", "asia/calcutta"):
+                            return 5.5
+                        # Accept "UTC+05:30", "+05:30", "-04:00", "5.5"
+                        if lower.startswith(("utc", "gmt")):
+                            lower = lower[3:]
+                        sign = 1.0
+                        if lower.startswith("+"):
+                            lower = lower[1:]
+                        elif lower.startswith("-"):
+                            sign = -1.0
+                            lower = lower[1:]
+                        if ":" in lower:
+                            h, m = lower.split(":", 1)
+                            return sign * (float(int(h)) + float(int(m)) / 60.0)
+                        try:
+                            return float(lower)
+                        except ValueError:
+                            pass
+                except Exception:
+                    pass
+                # Default offset
+                return 5.5 if isinstance(tz, str) and tz.lower() in ("asia/kolkata", "asia/calcutta") else 0.0
+
+            timezone_offset = _tz_offset(api_data.get("timezone"))
+
             # Try multiple API endpoints with correct request formats
             api_configs = [
                 {
@@ -702,15 +754,15 @@ class EnhancedAstrologyService:
                     "url": "https://json.freeastrologyapi.com/planets",
                     "headers": {"x-api-key": self.free_astrology_api_key, "Content-Type": "application/json"},
                     "payload": {
-                        "year": api_data.get("date", "").split("-")[0] if api_data.get("date") else None,
-                        "month": api_data.get("date", "").split("-")[1] if api_data.get("date") else None,
-                        "date": api_data.get("date", "").split("-")[2] if api_data.get("date") else None,
-                        "hours": api_data.get("time", "").split(":")[0] if api_data.get("time") else None,
-                        "minutes": api_data.get("time", "").split(":")[1] if api_data.get("time") else None,
+                        "year": year,
+                        "month": month,
+                        "date": day,
+                        "hour": hour,
+                        "minute": minute,
                         "seconds": 0,
-                        "latitude": api_data.get("latitude", 0),
-                        "longitude": api_data.get("longitude", 0),
-                        "timezone": api_data.get("timezone", 0),
+                        "latitude": float(api_data.get("latitude", 0)),
+                        "longitude": float(api_data.get("longitude", 0)),
+                        "timezone": timezone_offset,
                         "settings": api_data.get("settings", {})
                     }
                 },
