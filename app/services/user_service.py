@@ -99,6 +99,39 @@ class UserService:
             
             # Determine authentication type
             auth_type = self._determine_auth_type(identifier)
+
+            # If phone, normalize to E.164 (+91 for 10-digit Indian numbers)
+            if auth_type == AuthType.PHONE:
+                raw_value = identifier
+                phone = re.sub(r"[ \-\(\)]", "", raw_value or "")
+
+                normalized = None
+                if phone.startswith("+"):
+                    digits = re.sub(r"\D", "", phone)
+                    if 10 <= len(digits) <= 15:
+                        normalized = f"+{digits}"
+                else:
+                    if phone.startswith("00"):
+                        phone = "+" + phone[2:]
+                        digits = re.sub(r"\D", "", phone)
+                        if 10 <= len(digits) <= 15:
+                            normalized = f"+{digits}"
+                    else:
+                        if phone.startswith("0") and len(phone) == 11:
+                            phone = phone[1:]
+                        if phone.startswith("91") and len(phone) == 12:
+                            normalized = f"+{phone}"
+                        elif phone.isdigit() and len(phone) == 10:
+                            # Default to India (+91) for bare 10-digit numbers
+                            normalized = f"+91{phone}"
+                        elif phone.isdigit() and 10 <= len(phone) <= 15:
+                            normalized = f"+{phone}"
+
+                if not normalized or not validate_phone_number(normalized):
+                    raise ValidationError("Invalid phone number format; provide a 10-digit number or +E.164 format")
+
+                logger.info(f"🔍 DEBUG: Normalized phone identifier from '{raw_value}' to '{normalized}'")
+                identifier = normalized
             
             # Check rate limiting
             await self._check_rate_limit(identifier)
@@ -131,13 +164,19 @@ class UserService:
             raise AuthenticationError(f"Authentication initiation failed: {str(e)}")
     
     def _determine_auth_type(self, identifier: str) -> AuthType:
-        """Determine if identifier is email or phone number"""
+        """Determine if identifier is email or phone number (more permissive for phone)."""
         if validate_email(identifier):
             return AuthType.EMAIL
-        elif validate_phone_number(identifier):
+
+        # Accept E.164 directly, or phone-like inputs (digits with optional +, spaces, hyphens, parentheses)
+        if validate_phone_number(identifier):
             return AuthType.PHONE
-        else:
-            raise ValidationError("Invalid email or phone number format")
+
+        digits_only = re.sub(r"\D", "", identifier or "")
+        if 10 <= len(digits_only) <= 15:
+            return AuthType.PHONE
+
+        raise ValidationError("Invalid email or phone number format")
     
     async def _check_rate_limit(self, identifier: str) -> None:
         """Check rate limiting for authentication attempts using Firestore (fixed window)."""
@@ -434,6 +473,31 @@ class UserService:
         try:
             user_record = None
             is_new_user = False
+
+            # Ensure phone identifier is normalized to E.164 before Firebase calls
+            if auth_type == AuthType.PHONE.value:
+                raw_phone = identifier
+                phone_candidate = re.sub(r"[ \-\(\)]", "", raw_phone or "")
+
+                if phone_candidate.startswith("00"):
+                    phone_candidate = "+" + phone_candidate[2:]
+
+                if not phone_candidate.startswith("+"):
+                    if phone_candidate.startswith("0") and len(phone_candidate) == 11:
+                        phone_candidate = phone_candidate[1:]
+                    if phone_candidate.startswith("91") and len(phone_candidate) == 12:
+                        identifier = f"+{phone_candidate}"
+                    elif phone_candidate.isdigit() and len(phone_candidate) == 10:
+                        identifier = f"+91{phone_candidate}"
+                    elif phone_candidate.isdigit() and 10 <= len(phone_candidate) <= 15:
+                        identifier = f"+{phone_candidate}"
+                    else:
+                        logger.warning(f"⚠️ PHONE NORMALIZE: unexpected phone format '{raw_phone}' -> '{phone_candidate}'")
+                else:
+                    digits = re.sub(r"\D", "", phone_candidate)
+                    identifier = f"+{digits}"
+
+                logger.info(f"🔍 DEBUG: Using phone identifier for Firebase: {identifier}")
             
             # Try to find existing user
             if auth_type == AuthType.EMAIL.value:
