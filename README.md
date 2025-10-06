@@ -322,7 +322,8 @@ For questions or issues, please [add contact information]
 # Backend API Specification and Implementation Guide
 
 Audience: Flutter developers integrating the ZODIRA backend  
-Base URL: http://localhost:8000  
+Base URL (local): http://localhost:8000
+Production API Base URL: https://zodirabackend-506518268983.asia-east1.run.app
 API Version: v1  
 Auth: Bearer JWT from /api/v1/auth, persistent session supported  
 Data store: Firestore  

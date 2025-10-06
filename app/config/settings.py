@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     openai_max_retries: int = config('OPENAI_MAX_RETRIES', default=3, cast=int)
     openai_rate_limit_per_minute: int = config('OPENAI_RATE_LIMIT_PER_MINUTE', default=50, cast=int)
 
+    # Client/Frontend Configuration
+    api_base_url: str = config('API_BASE_URL', default='')
+
     # Redis removed: using Firestore for sessions and rate limits
     
     # Logging Configuration
