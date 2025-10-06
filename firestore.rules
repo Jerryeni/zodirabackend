@@ -70,5 +70,12 @@ service cloud.firestore {
       allow read, write: if request.auth != null &&
         get(/databases/$(database)/documents/person_profiles/$(profileId)).data.user_id == request.auth.uid;
     }
+    // Astrology chart parts per user
+    match /astrology_chart_parts/{docId} {
+      allow read: if request.auth != null &&
+        resource.data.user_id == request.auth.uid;
+      allow create, update: if request.auth != null &&
+        request.resource.data.user_id == request.auth.uid;
+    }
   }
 }

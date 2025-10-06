@@ -482,13 +482,13 @@ class EnhancedAstrologyService:
 
             # Get astrology chart
             chart_data = await self._get_astrology_chart(user_id, profile_id)
-
+            
             # Get predictions
-            predictions = await self._get_predictions(user_id, profile_id)
-
+            predictions = await self.get_predictions(user_id, profile_id)
+            
             # Get marriage matches
-            marriage_matches = await self._get_marriage_matches(user_id, profile_id)
-
+            marriage_matches = await self.get_marriage_matches(user_id, profile_id)
+            
             # Get partner profiles
             partner_profiles = await self._get_partner_profiles(user_id, profile_id)
 

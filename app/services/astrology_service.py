@@ -71,6 +71,9 @@ class AstrologyService:
             # Fetch all chart data
             chart_data = await self._fetch_all_charts(birth_details)
 
+            # Persist raw chart parts for per-tab retrieval
+            await self._save_chart_parts_to_db(user_id, profile_id, chart_data)
+            
             # Calculate Vimshottari Dasha
             moon_longitude = self._extract_moon_longitude(chart_data.get("rasi", {}))
             vimshottari_dasha = self._compute_vimshottari_dasha(
@@ -525,6 +528,83 @@ class AstrologyService:
                 'vimshottari_dasha': [],
                 'updated_at': datetime.utcnow().isoformat()
             }
+
+    # Persist raw parts for Rasi/Navamsa/D10/Chandra/Shadbala
+    async def _save_chart_parts_to_db(self, user_id: str, profile_id: str, parts: Dict[str, Any]) -> None:
+        try:
+            doc_id = f"{user_id}_{profile_id}"
+            doc_ref = self.db.collection('astrology_chart_parts').document(doc_id)
+
+            # Preserve created_at if updating
+            existing = doc_ref.get()
+            created_at = None
+            if existing.exists:
+                try:
+                    existing_data = existing.to_dict() or {}
+                    created_at = existing_data.get('created_at')
+                except Exception:
+                    created_at = None
+
+            def convert_datetime(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                elif isinstance(obj, date):
+                    return obj.isoformat()
+                elif isinstance(obj, time):
+                    return obj.isoformat()
+                elif hasattr(obj, '__dict__'):
+                    try:
+                        return convert_datetime(obj.__dict__)
+                    except Exception:
+                        return str(obj)
+                elif isinstance(obj, list):
+                    return [convert_datetime(item) for item in obj]
+                elif isinstance(obj, dict):
+                    return {k: convert_datetime(v) for k, v in obj.items()}
+                else:
+                    return obj
+
+            payload = {
+                'user_id': user_id,
+                'profile_id': profile_id,
+                'rasi': convert_datetime(parts.get('rasi', {})),
+                'navamsa': convert_datetime(parts.get('navamsa', {})),
+                'd10': convert_datetime(parts.get('d10', {})),
+                'chandra': convert_datetime(parts.get('chandra', {})),
+                'shadbala': convert_datetime(parts.get('shadbala', {})),
+                'updated_at': datetime.utcnow().isoformat()
+            }
+            if created_at:
+                payload['created_at'] = created_at
+            else:
+                payload['created_at'] = datetime.utcnow().isoformat()
+
+            doc_ref.set(payload)
+            logger.info(f"Saved astrology chart parts for {doc_id}")
+        except Exception as e:
+            logger.error(f"Failed to save chart parts to database: {e}")
+            # Do not raise; generation should continue
+
+    async def get_chart_part(self, user_id: str, profile_id: str, chart_type: str) -> Optional[Dict[str, Any]]:
+        try:
+            chart_type = (chart_type or '').lower()
+            valid = {'rasi', 'navamsa', 'd10', 'chandra', 'shadbala'}
+            if chart_type not in valid:
+                logger.warning(f"Invalid chart_type requested: {chart_type}")
+                return None
+
+            doc_id = f"{user_id}_{profile_id}"
+            doc_ref = self.db.collection('astrology_chart_parts').document(doc_id)
+            doc = doc_ref.get()
+            if not doc.exists:
+                logger.info(f"Chart parts not found for {doc_id}")
+                return None
+
+            data = doc.to_dict() or {}
+            return data.get(chart_type) or None
+        except Exception as e:
+            logger.error(f"Failed to get chart part {chart_type} for {user_id}_{profile_id}: {e}")
+            return None
 
 # Global service instance
 astrology_service = AstrologyService()

@@ -24,6 +24,9 @@ from app.services.enhanced_astrology_service import enhanced_astrology_service
 from app.core.exceptions import ValidationError, NotFoundError
 from google.cloud import firestore as gcf
 from google.cloud.firestore import FieldFilter
+from app.services.chatgpt_service import chatgpt_service
+import logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 security = HTTPBearer()
@@ -480,29 +483,51 @@ async def get_dashboard_data(current_user: str = Depends(get_current_user)):
 
         # Get recent predictions
         predictions_ref = db.collection('predictions')
-        recent_predictions_query = predictions_ref.where(filter=FieldFilter('user_id', '==', current_user))\
-                                                .where(filter=FieldFilter('is_active', '==', True))\
-                                                .order_by('created_at', direction=gcf.Query.DESCENDING)\
-                                                .limit(10)
+        try:
+            recent_predictions_query = predictions_ref.where(filter=FieldFilter('user_id', '==', current_user))\
+                                                     .where(filter=FieldFilter('is_active', '==', True))\
+                                                     .order_by('created_at', direction=gcf.Query.DESCENDING)\
+                                                     .limit(10)
+            recent_predictions_docs = list(recent_predictions_query.stream())
+        except Exception as e:
+            logger.warning(f"Firestore index missing for predictions ordered query; falling back without order: {e}")
+            recent_predictions_query = predictions_ref.where(filter=FieldFilter('user_id', '==', current_user))\
+                                                     .where(filter=FieldFilter('is_active', '==', True))\
+                                                     .limit(10)
+            recent_predictions_docs = list(recent_predictions_query.stream())
 
         recent_predictions = []
-        for doc in recent_predictions_query.stream():
-            pred_data = doc.to_dict()
-            prediction = Prediction(**pred_data)
-            recent_predictions.append(prediction)
+        for doc in recent_predictions_docs:
+            try:
+                pred_data = doc.to_dict()
+                prediction = Prediction(**pred_data)
+                recent_predictions.append(prediction)
+            except Exception as e:
+                logger.warning(f"Skipping invalid prediction doc {doc.id}: {e}")
 
         # Get recent marriage matches
         matches_ref = db.collection('marriage_matches')
-        recent_matches_query = matches_ref.where(filter=FieldFilter('user_id', '==', current_user))\
-                                        .where(filter=FieldFilter('is_active', '==', True))\
-                                        .order_by('created_at', direction=gcf.Query.DESCENDING)\
-                                        .limit(5)
+        try:
+            recent_matches_query = matches_ref.where(filter=FieldFilter('user_id', '==', current_user))\
+                                              .where(filter=FieldFilter('is_active', '==', True))\
+                                              .order_by('created_at', direction=gcf.Query.DESCENDING)\
+                                              .limit(5)
+            recent_matches_docs = list(recent_matches_query.stream())
+        except Exception as e:
+            logger.warning(f"Firestore index missing for matches ordered query; falling back without order: {e}")
+            recent_matches_query = matches_ref.where(filter=FieldFilter('user_id', '==', current_user))\
+                                              .where(filter=FieldFilter('is_active', '==', True))\
+                                              .limit(5)
+            recent_matches_docs = list(recent_matches_query.stream())
 
         recent_matches = []
-        for doc in recent_matches_query.stream():
-            match_data = doc.to_dict()
-            marriage_match = MarriageMatch(**match_data)
-            recent_matches.append(marriage_match)
+        for doc in recent_matches_docs:
+            try:
+                match_data = doc.to_dict()
+                marriage_match = MarriageMatch(**match_data)
+                recent_matches.append(marriage_match)
+            except Exception as e:
+                logger.warning(f"Skipping invalid marriage_match doc {doc.id}: {e}")
 
         return {
             "user_id": current_user,

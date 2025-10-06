@@ -316,3 +316,91 @@ async def delete_astrology_chart(
     except Exception as e:
         logger.error(f"Failed to delete astrology chart for user {current_user}: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete astrology chart")
+
+# --- Per-part chart retrieval endpoints (Rasi/Navamsa/D10/Chandra/Shadbala) ---
+
+from typing import Literal
+
+@router.get("/profiles/{profile_id}/charts/{chart_type}")
+async def get_chart_part_endpoint(
+    profile_id: str,
+    chart_type: Literal["rasi", "navamsa", "d10", "chandra", "shadbala"],
+    current_user: str = Depends(get_current_user)
+):
+    """
+    Return a single astrology chart part (rasi, navamsa, d10, chandra, shadbala) for the given profile.
+    - Validates ownership (profile belongs to the authenticated user)
+    - Fetches raw chart part persisted in astrology_chart_parts
+    """
+    try:
+        # Validate profile ownership
+        db = get_firestore_client()
+        profile_doc = db.collection('person_profiles').document(profile_id).get()
+        if not profile_doc.exists:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        data = profile_doc.to_dict()
+        if data.get('user_id') != current_user:
+            raise HTTPException(status_code=403, detail="Not authorized to access this profile")
+
+        # Fetch chart part
+        part = await astrology_service.get_chart_part(current_user, profile_id, chart_type)
+        if not part:
+            raise HTTPException(status_code=404, detail=f"{chart_type} chart not found. Generate the chart first.")
+
+        return {
+            "profile_id": profile_id,
+            "chart_type": chart_type,
+            "data": part,
+            "status": "success"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to retrieve {chart_type} chart part for user {current_user}, profile {profile_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve {chart_type} chart part")
+
+
+@router.get("/profiles/{profile_id}/charts/combined")
+async def get_combined_chart_endpoint(
+    profile_id: str,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    Alias for combined chart retrieval (same as GET /chart/{profile_id}).
+    Returns the structured AstrologyChartResponse.
+    """
+    try:
+        # Validate profile ownership
+        db = get_firestore_client()
+        profile_doc = db.collection('person_profiles').document(profile_id).get()
+        if not profile_doc.exists:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        profile_data = profile_doc.to_dict()
+        if profile_data.get('user_id') != current_user:
+            raise HTTPException(status_code=403, detail="Not authorized to access this profile")
+
+        chart = await astrology_service.get_astrology_chart(current_user, profile_id)
+        if not chart:
+            raise HTTPException(status_code=404, detail="Astrology chart not found. Please generate the chart first.")
+
+        chart_response = AstrologyChartResponse(
+            id=f"{current_user}_{profile_id}",
+            user_id=chart.user_id,
+            profile_id=chart.profile_id,
+            houses=chart.houses,
+            career=chart.career,
+            finance=chart.finance,
+            health=chart.health,
+            travel=chart.travel,
+            vimshottari_dasha=chart.vimshottari_dasha,
+            birth_details=chart.birth_details,
+            created_at=chart.created_at,
+            updated_at=chart.updated_at
+        )
+        return {"chart": chart_response, "status": "success"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to retrieve combined chart for user {current_user}, profile {profile_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve combined chart")
