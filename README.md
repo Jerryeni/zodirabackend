@@ -152,12 +152,13 @@ Follow these steps to run the backend natively on your machine without Docker:
 3) Configure environment
 - cp .env.example .env
 - Open .env and fill in required variables. Minimum to boot and hit Firestore:
-  - FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_ID, FIREBASE_STORAGE_BUCKET
+  - FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY_ID, FIREBASE_PRIVATE_KEY, FIREBASE_STORAGE_BUCKET
   - SECRET_KEY
 - Optional (for full functionality):
+  - FIREBASE_CLIENT_ID (optional; not required by this backend. If present it is embedded in Admin SDK init but unused elsewhere)
   - SMTP (FIREBASE_SMTP_*): for email OTP delivery
   - MyDreams SMS (MYDREAMS_*): for SMS OTP delivery
-  - GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI: for Google OAuth
+  - GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI: for Google OAuth (Option A only needs GOOGLE_CLIENT_ID)
   - OPENAI_API_KEY: for enhanced AI features
 
 4) Run the server

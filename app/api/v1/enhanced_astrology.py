@@ -11,6 +11,7 @@ This module provides API endpoints for:
 from datetime import datetime, date, time
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.core.dependencies import get_current_user
@@ -316,40 +317,47 @@ async def generate_specific_prediction(
 
 # Marriage Matching Endpoints
 
+# Request models for marriage matching (prevents 422 by defining explicit body schema)
+class PartnerData(BaseModel):
+    name: str
+    birth_date: date  # Accepts ISO "YYYY-MM-DD"
+    birth_time: time  # Accepts ISO "HH:MM:SS"
+    birth_place: str
+    gender: Gender
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+class MarriageMatchRequest(BaseModel):
+    main_profile_id: str
+    partner_data: PartnerData
+
 @router.post("/marriage-matching/generate")
 async def generate_marriage_match(
-    main_profile_id: str,
-    partner_data: Dict[str, Any],
+    request: MarriageMatchRequest,
     current_user: str = Depends(get_current_user)
 ):
     """
-    Generate marriage compatibility analysis between main profile and partner
+    Generate marriage compatibility analysis between main profile and partner.
+
+    Body JSON (example):
+    {
+      "main_profile_id": "MAIN_PROFILE_ID",
+      "partner_data": {
+        "name": "Partner Name",
+        "birth_date": "1995-03-15",
+        "birth_time": "10:30:00",
+        "birth_place": "Mumbai, India",
+        "gender": "female",
+        "latitude": 19.0760,
+        "longitude": 72.8777
+      }
+    }
     """
     try:
-        # Validate required partner data
-        required_fields = ['name', 'birth_date', 'birth_time', 'birth_place', 'gender']
-        for field in required_fields:
-            if field not in partner_data:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Missing required field: {field}"
-                )
-
-        # Validate birth date format
-        try:
-            if isinstance(partner_data['birth_date'], str):
-                partner_data['birth_date'] = date.fromisoformat(partner_data['birth_date'])
-            if isinstance(partner_data['birth_time'], str):
-                partner_data['birth_time'] = time.fromisoformat(partner_data['birth_time'])
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid date/time format: {e}"
-            )
-
+        partner_payload: Dict[str, Any] = request.partner_data.model_dump()
         # Generate marriage match
         marriage_match = await enhanced_astrology_service.generate_marriage_match(
-            current_user, main_profile_id, partner_data
+            current_user, request.main_profile_id, partner_payload
         )
 
         return {
