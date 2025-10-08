@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # Security Configuration
     secret_key: str = config('SECRET_KEY', default='dev-secret-key-change-in-production-min-32-chars')
     algorithm: str = "HS256"
-    access_token_expire_minutes: int = config('ACCESS_TOKEN_EXPIRE_MINUTES', default=180, cast=int)
+    access_token_expire_minutes: int = config('ACCESS_TOKEN_EXPIRE_MINUTES', default=43200, cast=int)  # 30 days (60 * 24 * 30)
     
     # CORS Configuration - Accept all origins for development
     allowed_origins: List[str] = config(

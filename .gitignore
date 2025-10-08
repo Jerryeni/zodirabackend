@@ -113,3 +113,6 @@ app.log
 
 # Service account keys
 config/serviceAccountKey.json
+
+.github/instructions/kluster-code-verify.instructions.md
+.kluster

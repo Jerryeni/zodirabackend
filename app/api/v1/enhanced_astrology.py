@@ -11,7 +11,7 @@ This module provides API endpoints for:
 from datetime import datetime, date, time
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.core.dependencies import get_current_user
@@ -317,19 +317,167 @@ async def generate_specific_prediction(
 
 # Marriage Matching Endpoints
 
-# Request models for marriage matching (prevents 422 by defining explicit body schema)
+# Request models for marriage matching with permissive parsing to avoid 422 on common client payloads
 class PartnerData(BaseModel):
-    name: str
+    name: str = "Partner"
     birth_date: date  # Accepts ISO "YYYY-MM-DD"
-    birth_time: time  # Accepts ISO "HH:MM:SS"
-    birth_place: str
-    gender: Gender
+    birth_time: time = time(12, 0)  # Defaults to noon if missing
+    birth_place: str = "Unknown"
+    gender: Gender = Gender.OTHER
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+
+    @field_validator('birth_date', mode='before')
+    @classmethod
+    def _coerce_birth_date(cls, v):
+        if v is None:
+            # Default to today if not provided to avoid 422; better to require on client
+            return date.today()
+        if isinstance(v, date):
+            return v
+        if isinstance(v, str):
+            s = v.strip().replace('/', '-')
+            try:
+                return date.fromisoformat(s)
+            except Exception:
+                pass
+        raise ValueError("birth_date must be in 'YYYY-MM-DD' format")
+
+    @field_validator('birth_time', mode='before')
+    @classmethod
+    def _coerce_birth_time(cls, v):
+        if v is None:
+            return time(12, 0)
+        if isinstance(v, time):
+            return v
+        if isinstance(v, str):
+            s = v.strip()
+            # Accept "HH:MM" by normalizing to "HH:MM:00"
+            if s and s.count(':') == 1:
+                s = f"{s}:00"
+            try:
+                return time.fromisoformat(s)
+            except Exception:
+                pass
+        raise ValueError("birth_time must be in 'HH:MM' or 'HH:MM:SS' format")
+
+    @field_validator('gender', mode='before')
+    @classmethod
+    def _coerce_gender(cls, v):
+        if v is None:
+            return Gender.OTHER
+        if isinstance(v, Gender):
+            return v
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in ('male', 'm'):
+                return Gender.MALE
+            if s in ('female', 'f'):
+                return Gender.FEMALE
+            if s in ('other', 'o', 'nonbinary', 'non-binary'):
+                return Gender.OTHER
+        # Default to OTHER instead of raising to avoid 422s from missing/unknown values
+        return Gender.OTHER
+
+    @field_validator('latitude', 'longitude', mode='before')
+    @classmethod
+    def _coerce_float(cls, v):
+        if v is None or isinstance(v, (int, float)):
+            return v
+        if isinstance(v, str):
+            s = v.strip()
+            if s == '':
+                return None
+            try:
+                return float(s)
+            except Exception:
+                pass
+        raise ValueError("latitude/longitude must be numbers")
 
 class MarriageMatchRequest(BaseModel):
     main_profile_id: str
     partner_data: PartnerData
+    # Optional: full main profile details. If provided, service will prefer these over DB.
+    main_profile_data: Optional[PartnerData] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def _coerce_legacy_payload(cls, v):
+        """
+        Accept multiple shapes:
+        1) Nested form:
+           {
+             "main_profile_id": "MAIN",
+             "main_profile_data": { ... main profile fields ... },
+             "partner_data": { ... partner fields ... }
+           }
+
+        2) Flat legacy form:
+           {
+             "main_profile_id" | "profile_id" | "mainProfileId": "...",
+             "name" | "partner_name": "...",
+             "birth_date" | "birthDate": "YYYY-MM-DD",
+             "birth_time" | "birthTime": "HH:MM[:SS]",
+             "birth_place" | "birthPlace": "...",
+             "gender": "male|female|other",
+             "latitude": "..."?,
+             "longitude": "..."?
+           }
+
+        3) main_profile_id provided as an object:
+           {
+             "main_profile_id": { "id": "...", "<fields>": ... },
+             "partner_data": { ... }
+           }
+        """
+        if not isinstance(v, dict):
+            return v
+
+        data = dict(v)
+
+        # If main_profile_id is an object, extract id and set main_profile_data
+        mpi_val = data.get('main_profile_id')
+        if isinstance(mpi_val, dict):
+            candidate_id = (
+                mpi_val.get('id') or
+                mpi_val.get('profile_id') or
+                mpi_val.get('profileId')
+            )
+            if candidate_id:
+                data['main_profile_id'] = candidate_id
+            # Treat the object as main_profile_data
+            data['main_profile_data'] = mpi_val
+
+        # Support alternative keys for main_profile_data e.g., main_profile, mainProfile
+        if 'main_profile_data' not in data:
+            alt_main = data.get('main_profile') or data.get('mainProfile')
+            if isinstance(alt_main, dict):
+                data['main_profile_data'] = alt_main
+                if not data.get('main_profile_id'):
+                    candidate_id = (
+                        alt_main.get('id') or
+                        alt_main.get('profile_id') or
+                        alt_main.get('profileId')
+                    )
+                    if candidate_id:
+                        data['main_profile_id'] = candidate_id
+
+        # If partner_data missing, build from flat keys (legacy support)
+        if 'partner_data' not in data:
+            mpi = data.get('main_profile_id') or data.get('profile_id') or data.get('mainProfileId')
+            if mpi and (data.get('name') or data.get('partner_name') or data.get('birth_date') or data.get('birthDate')):
+                partner = {
+                    'name': (data.get('name') or data.get('partner_name') or "Partner"),
+                    'birth_date': (data.get('birth_date') or data.get('birthDate')),
+                    'birth_time': (data.get('birth_time') or data.get('birthTime') or "12:00:00"),
+                    'birth_place': (data.get('birth_place') or data.get('birthPlace') or "Unknown"),
+                    'gender': (data.get('gender') or "other"),
+                    'latitude': data.get('latitude'),
+                    'longitude': data.get('longitude'),
+                }
+                data = {'main_profile_id': mpi, 'partner_data': partner, **({'main_profile_data': data.get('main_profile_data')} if data.get('main_profile_data') else {})}
+
+        return data
 
 @router.post("/marriage-matching/generate")
 async def generate_marriage_match(
@@ -355,9 +503,10 @@ async def generate_marriage_match(
     """
     try:
         partner_payload: Dict[str, Any] = request.partner_data.model_dump()
-        # Generate marriage match
+        # Generate marriage match (use provided main_profile_data if available)
+        mpd = request.main_profile_data.model_dump() if request.main_profile_data else None
         marriage_match = await enhanced_astrology_service.generate_marriage_match(
-            current_user, request.main_profile_id, partner_payload
+            current_user, request.main_profile_id, partner_payload, main_profile_data=mpd
         )
 
         return {

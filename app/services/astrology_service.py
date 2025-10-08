@@ -28,13 +28,16 @@ class AstrologyService:
 
     def __init__(self):
         self.free_astro_api_key = settings.free_astrology_api_key
-        # Updated API endpoints - using correct astrology API URLs
+        # FreeAstrology API endpoints (server-to-server upstream)
         self.api_endpoints = {
-            "rasi": "https://api.vedicastroapi.com/v3-json/horoscope/planets",
-            "navamsa": "https://api.vedicastroapi.com/v3-json/horoscope/navamsa-chart-info",
-            "d10": "https://api.vedicastroapi.com/v3-json/horoscope/d10-chart-info",
-            "chandra": "https://api.vedicastroapi.com/v3-json/horoscope/chandra-kundali-info",
-            "shadbala": "https://api.vedicastroapi.com/v3-json/horoscope/shadbala/summary"
+            "rasi": "https://json.freeastrologyapi.com/planets",
+            "navamsa": "https://json.freeastrologyapi.com/navamsa-chart-info",
+            "d10": "https://json.freeastrologyapi.com/d10-chart-info",
+            "chandra": "https://json.freeastrologyapi.com/chandra-kundali-info",
+            "shadbala": "https://json.freeastrologyapi.com/shadbala/summary",
+            
+            "planets_extended": "https://json.freeastrologyapi.com/planets/extended",
+            "vimsottari": "https://json.freeastrologyapi.com/vimsottari/maha-dasas-and-antar-dasas"
         }
         self._db = None
         self._vimshottari_order = None
@@ -52,6 +55,93 @@ class AstrologyService:
         if self._vimshottari_order is None:
             self._vimshottari_order = self._get_or_init_vimshottari_order()
         return self._vimshottari_order
+
+    def _normalize_birth_details(self, details: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize and sanitize birth details for external API payloads (JSON-serializable only)"""
+        d = details or {}
+
+        # Extract date components
+        year = d.get("year")
+        month = d.get("month")
+        day = d.get("date") or d.get("day")
+
+        # Extract time components (support both hour/hours, minute/minutes, second/seconds)
+        hour = d.get("hour", d.get("hours", 0)) or 0
+        minute = d.get("minute", d.get("minutes", 0)) or 0
+        second = d.get("second", d.get("seconds", 0)) or 0
+
+        # Coerce numeric types
+        try:
+            year = int(year) if year is not None else None
+            month = int(month) if month is not None else None
+            day = int(day) if day is not None else None
+        except Exception:
+            pass
+
+        try:
+            hour = int(hour)
+        except Exception:
+            hour = 0
+        try:
+            minute = int(minute)
+        except Exception:
+            minute = 0
+        try:
+            second = int(second)
+        except Exception:
+            second = 0
+
+        # Coordinates
+        latitude = d.get("latitude", 20.5937)
+        longitude = d.get("longitude", 78.9629)
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+        except Exception:
+            latitude, longitude = 20.5937, 78.9629
+
+        # Timezone normalization
+        tz = d.get("timezone", 5.5)
+
+        def _tz_offset(val):
+            try:
+                if isinstance(val, (int, float)):
+                    return float(val)
+                if isinstance(val, str):
+                    s = val.strip()
+                    lower = s.lower()
+                    if lower in ("asia/kolkata", "asia/calcutta"):
+                        return 5.5
+                    # Accept "UTC+05:30", "+05:30", "-04:00", "5.5"
+                    if lower.startswith(("utc", "gmt")):
+                        lower = lower[3:]
+                    sign = 1.0
+                    if lower.startswith("+"):
+                        lower = lower[1:]
+                    elif lower.startswith("-"):
+                        sign = -1.0
+                        lower = lower[1:]
+                    if ":" in lower:
+                        h, m = lower.split(":", 1)
+                        return sign * (float(int(h)) + float(int(m)) / 60.0)
+                    return float(lower)
+            except Exception:
+                pass
+            return 5.5
+
+        timezone = _tz_offset(tz)
+
+        return {
+            "year": year,
+            "month": month,
+            "date": day,
+            "hours": hour,
+            "minutes": minute,
+            "seconds": second,
+            "latitude": latitude,
+            "longitude": longitude,
+            "timezone": timezone,
+        }
 
     async def generate_astrology_chart(self, user_id: str, profile_id: str, birth_details: Dict[str, Any]) -> AstrologyChart:
         """
@@ -76,9 +166,19 @@ class AstrologyService:
             
             # Calculate Vimshottari Dasha
             moon_longitude = self._extract_moon_longitude(chart_data.get("rasi", {}))
-            vimshottari_dasha = self._compute_vimshottari_dasha(
-                birth_details["birth_datetime"], moon_longitude
-            )
+            birth_dt = birth_details.get("birth_datetime")
+            if not isinstance(birth_dt, datetime):
+                try:
+                    y = int(birth_details.get("year"))
+                    m = int(birth_details.get("month"))
+                    d = int(birth_details.get("date") or birth_details.get("day"))
+                    hh = int(birth_details.get("hour", birth_details.get("hours", 0)) or 0)
+                    mm = int(birth_details.get("minute", birth_details.get("minutes", 0)) or 0)
+                    ss = int(birth_details.get("second", birth_details.get("seconds", 0)) or 0)
+                    birth_dt = datetime(y, m, d, hh, mm, ss)
+                except Exception:
+                    birth_dt = datetime.utcnow()
+            vimshottari_dasha = self._compute_vimshottari_dasha(birth_dt, moon_longitude)
 
             # Structure the data
             structured_data = self._structure_astrology_data(
@@ -191,8 +291,16 @@ class AstrologyService:
         # Fetch from API
         headers = {"x-api-key": self.free_astro_api_key}
 
+        # Ensure only JSON-serializable payload is sent to external APIs
+        payload = self._normalize_birth_details(details)
+        try:
+            log_keys = sorted(list(payload.keys()))
+        except Exception:
+            log_keys = list(payload.keys())
+        logger.info(f"Calling astrology API {url} with payload keys: {log_keys}")
+
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=details, headers=headers)
+            response = await client.post(url, json=payload, headers=headers)
 
             if response.status_code == 200:
                 data = response.json()
@@ -217,19 +325,39 @@ class AstrologyService:
 
     def _extract_moon_longitude(self, rasi_data: Dict[str, Any]) -> Optional[float]:
         """
-        Extract Moon longitude from Rasi chart data
-
-        Args:
-            rasi_data: Rasi chart data
-
-        Returns:
-            Moon longitude or None
+        Extract Moon longitude from Rasi chart data (supporting multiple API response shapes)
         """
         try:
-            rasi_planets = rasi_data.get("output", [])[0] if rasi_data.get("output") else {}
-            for planet_data in rasi_planets.values():
-                if planet_data.get("name") == "Moon":
-                    return planet_data.get("fullDegree")
+            # Shape A: {"output": [ { "<id>": { "name": "Moon", "fullDegree": ... }, ... } ]}
+            if isinstance(rasi_data.get("output"), list) and rasi_data["output"]:
+                maybe_map = rasi_data["output"][0]
+                if isinstance(maybe_map, dict):
+                    for item in maybe_map.values():
+                        name = item.get("name") or item.get("planet") or item.get("Planet") or ""
+                        if str(name).lower() == "moon":
+                            val = item.get("fullDegree") or item.get("degree") or item.get("full_degree")
+                            return float(val) if val is not None else None
+
+            # Shape B: {"planets": [ {"name":"Moon","fullDegree":...}, ... ]} or dict
+            planets = rasi_data.get("planets")
+            if isinstance(planets, list):
+                for item in planets:
+                    name = item.get("name") or item.get("planet") or ""
+                    if str(name).lower() == "moon":
+                        val = item.get("fullDegree") or item.get("degree")
+                        return float(val) if val is not None else None
+            if isinstance(planets, dict):
+                for item in planets.values():
+                    name = item.get("name") or item.get("planet") or ""
+                    if str(name).lower() == "moon":
+                        val = item.get("fullDegree") or item.get("degree")
+                        return float(val) if val is not None else None
+
+            # Shape C: nested under "response" or "data" key
+            resp = rasi_data.get("response") or rasi_data.get("data")
+            if isinstance(resp, dict):
+                return self._extract_moon_longitude(resp)
+
             return None
         except Exception as e:
             logger.error(f"Failed to extract Moon longitude: {e}")
@@ -251,10 +379,33 @@ class AstrologyService:
             moon_longitude = 0
 
         nakshatra_size = 13.3333333
-        nakshatra_index = int(moon_longitude // nakshatra_size)
-        lord, full_years = self.vimshottari_order[nakshatra_index]
+        # Derive nakshatra index from Moon's longitude (0..26), clamp to bounds
+        nakshatra_index_raw = int(moon_longitude // nakshatra_size)
+        if nakshatra_index_raw < 0:
+            nakshatra_index_raw = 0
+        elif nakshatra_index_raw > 26:
+            nakshatra_index_raw = 26
 
-        nakshatra_start = nakshatra_index * nakshatra_size
+        # Resolve Vimshottari order safely (9 lords repeating over 27 nakshatras)
+        order = self.vimshottari_order or self._get_or_init_vimshottari_order()
+        if not order:
+            logger.warning("Vimshottari order unavailable, using fallback list")
+            order = [
+                ("Ketu", 7),
+                ("Venus", 20),
+                ("Sun", 6),
+                ("Moon", 10),
+                ("Mars", 7),
+                ("Rahu", 18),
+                ("Jupiter", 16),
+                ("Saturn", 19),
+                ("Mercury", 17),
+            ]
+
+        idx0 = nakshatra_index_raw % len(order)
+        lord, full_years = order[idx0]
+
+        nakshatra_start = nakshatra_index_raw * nakshatra_size
         nakshatra_progress = moon_longitude - nakshatra_start
         balance_fraction = (nakshatra_size - nakshatra_progress) / nakshatra_size
         balance_years = full_years * balance_fraction
@@ -275,10 +426,10 @@ class AstrologyService:
         current_time = dasha_end
 
         # Remaining Dashas
-        order_index = nakshatra_index
-        for i in range(1, len(self.vimshottari_order) * 12):
-            order_index = (nakshatra_index + i) % len(self.vimshottari_order)
-            lord, full_years = self.vimshottari_order[order_index]
+        order_index = idx0
+        for i in range(1, len(order) * 12):
+            order_index = (idx0 + i) % len(order)
+            lord, full_years = order[order_index]
             dasha_end = current_time + relativedelta(years=full_years)
 
             dasha_sequence.append(DashaPeriod(
@@ -374,15 +525,37 @@ class AstrologyService:
             if doc.exists:
                 data = doc.to_dict()
                 order_data = data.get('order', [])
-                # Convert back to tuple format for internal use
-                if order_data and isinstance(order_data, list):
+                # Convert back to tuple format for internal use; fallback to defaults if missing/invalid
+                parsed = []
+                if isinstance(order_data, list) and order_data:
                     if isinstance(order_data[0], dict):
                         # New format: list of dicts
-                        return [(item['planet'], item['years']) for item in order_data]
+                        try:
+                            parsed = [(item.get('planet'), item.get('years')) for item in order_data if isinstance(item, dict)]
+                        except Exception:
+                            parsed = []
                     else:
                         # Old format: list of tuples (for backward compatibility)
-                        return order_data
-                return []
+                        parsed = order_data
+
+                try:
+                    if parsed and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in parsed):
+                        return parsed
+                except Exception:
+                    pass
+
+                # Fallback to default order if not present or invalid
+                return [
+                    ("Ketu", 7),
+                    ("Venus", 20),
+                    ("Sun", 6),
+                    ("Moon", 10),
+                    ("Mars", 7),
+                    ("Rahu", 18),
+                    ("Jupiter", 16),
+                    ("Saturn", 19),
+                    ("Mercury", 17),
+                ]
             else:
                 # Initialize with default values
                 default_order = [
@@ -604,6 +777,222 @@ class AstrologyService:
             return data.get(chart_type) or None
         except Exception as e:
             logger.error(f"Failed to get chart part {chart_type} for {user_id}_{profile_id}: {e}")
+            return None
+
+    async def generate_chart_part(self, user_id: str, profile_id: str, birth_details: Dict[str, Any], chart_type: str) -> Optional[Dict[str, Any]]:
+        """
+        Generate a single chart part (rasi, navamsa, d10, chandra, shadbala) and persist it.
+
+        Args:
+            user_id: User ID
+            profile_id: Profile ID
+            birth_details: Raw birth details (strings/ints acceptable) - normalized internally
+            chart_type: One of rasi | navamsa | d10 | chandra | shadbala
+
+        Returns:
+            The fetched chart part data or None on failure
+        """
+        valid = {'rasi', 'navamsa', 'd10', 'chandra', 'shadbala'}
+        ct = (chart_type or '').lower()
+        if ct not in valid:
+            raise ValueError(f"Invalid chart_type '{chart_type}', must be one of {sorted(list(valid))}")
+
+        url = self.api_endpoints.get(ct)
+        if not url:
+            raise ValueError(f"No API endpoint configured for chart_type '{chart_type}'")
+
+        # Build cache file path consistent with _fetch_all_charts
+        cache_dir = "cache/astrology"
+        os.makedirs(cache_dir, exist_ok=True)
+        try:
+            year = birth_details.get('year')
+            month = birth_details.get('month')
+            datev = birth_details.get('date') or birth_details.get('day')
+        except Exception:
+            year = month = datev = None
+        cache_file = os.path.join(cache_dir, f"{ct}_{year}_{month}_{datev}.json")
+
+        try:
+            # Fetch the single chart part (payload normalization happens inside)
+            data = await self._fetch_chart_with_cache(url, birth_details, cache_file)
+
+            # Write/merge to Firestore chart parts doc
+            doc_id = f"{user_id}_{profile_id}"
+            doc_ref = self.db.collection('astrology_chart_parts').document(doc_id)
+
+            # Preserve created_at if updating
+            existing = doc_ref.get()
+            created_at = None
+            if existing.exists:
+                try:
+                    existing_data = existing.to_dict() or {}
+                    created_at = existing_data.get('created_at')
+                except Exception:
+                    created_at = None
+
+            # Reuse serializer from _save_chart_parts_to_db
+            def convert_datetime(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                elif isinstance(obj, date):
+                    return obj.isoformat()
+                elif isinstance(obj, time):
+                    return obj.isoformat()
+                elif hasattr(obj, '__dict__'):
+                    try:
+                        return convert_datetime(obj.__dict__)
+                    except Exception:
+                        return str(obj)
+                elif isinstance(obj, list):
+                    return [convert_datetime(item) for item in obj]
+                elif isinstance(obj, dict):
+                    return {k: convert_datetime(v) for k, v in obj.items()}
+                else:
+                    return obj
+
+            payload = {
+                ct: convert_datetime(data),
+                'updated_at': datetime.utcnow().isoformat()
+            }
+            if created_at:
+                payload['created_at'] = created_at
+            else:
+                payload['created_at'] = datetime.utcnow().isoformat()
+
+            # Merge update to keep other parts untouched
+            doc_ref.set(payload, merge=True)
+            logger.info(f"Saved single chart part '{ct}' for {doc_id}")
+            return data
+        except Exception as e:
+            logger.error(f"Failed to generate chart part '{chart_type}' for {user_id}_{profile_id}: {e}")
+            return None
+
+    async def fetch_planets_extended(self, birth_details: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Fetch extended planetary details for dashboard:
+        - planet name, position, zodiac sign, sign lord, house, nakshatra number/name/pada,
+          nakshatra vimsottari lord, retrograde status.
+        """
+        try:
+            url = self.api_endpoints.get("planets_extended")
+            if not url:
+                raise ValueError("planets_extended endpoint not configured")
+            bd = self._normalize_birth_details(birth_details or {})
+            cache_dir = "cache/astrology"
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_file = os.path.join(
+                cache_dir,
+                f"planets_extended_{bd.get('year')}_{bd.get('month')}_{bd.get('date')}.json"
+            )
+            data = await self._fetch_chart_with_cache(url, bd, cache_file)
+            logger.info("Fetched planets_extended successfully")
+            return data
+        except Exception as e:
+            logger.error(f"Failed to fetch planets_extended: {e}")
+            return None
+
+    async def fetch_vimsottari(self, birth_details: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Fetch Vimsottari maha-dasas and antar-dasas for dashboard storage.
+        """
+        try:
+            url = self.api_endpoints.get("vimsottari")
+            if not url:
+                raise ValueError("vimsottari endpoint not configured")
+            bd = self._normalize_birth_details(birth_details or {})
+            cache_dir = "cache/astrology"
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_file = os.path.join(
+                cache_dir,
+                f"vimsottari_{bd.get('year')}_{bd.get('month')}_{bd.get('date')}.json"
+            )
+            data = await self._fetch_chart_with_cache(url, bd, cache_file)
+            logger.info("Fetched vimsottari successfully")
+            return data
+        except Exception as e:
+            logger.error(f"Failed to fetch vimsottari: {e}")
+            return None
+
+    async def save_dashboard_extras(
+        self,
+        user_id: str,
+        profile_id: str,
+        planets_extended: Optional[Dict[str, Any]],
+        vimsottari: Optional[Dict[str, Any]],
+    ) -> bool:
+        """
+        Persist dashboard extras into Firestore:
+        Collection: astrology_dashboard_extras
+        Document:   {user_id}_{profile_id}
+        Fields:     planets_extended, vimsottari, created_at, updated_at
+        """
+        try:
+            doc_id = f"{user_id}_{profile_id}"
+            doc_ref = self.db.collection('astrology_dashboard_extras').document(doc_id)
+
+            # Preserve created_at if updating
+            existing = doc_ref.get()
+            created_at = None
+            if existing.exists:
+                try:
+                    existing_data = existing.to_dict() or {}
+                    created_at = existing_data.get('created_at')
+                except Exception:
+                    created_at = None
+
+            def convert_datetime(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                elif isinstance(obj, date):
+                    return obj.isoformat()
+                elif isinstance(obj, time):
+                    return obj.isoformat()
+                elif hasattr(obj, '__dict__'):
+                    try:
+                        return convert_datetime(obj.__dict__)
+                    except Exception:
+                        return str(obj)
+                elif isinstance(obj, list):
+                    return [convert_datetime(item) for item in obj]
+                elif isinstance(obj, dict):
+                    return {k: convert_datetime(v) for k, v in obj.items()}
+                else:
+                    return obj
+
+            payload: Dict[str, Any] = {
+                'user_id': user_id,
+                'profile_id': profile_id,
+                'updated_at': datetime.utcnow().isoformat()
+            }
+            if planets_extended is not None:
+                payload['planets_extended'] = convert_datetime(planets_extended)
+            if vimsottari is not None:
+                payload['vimsottari'] = convert_datetime(vimsottari)
+            if created_at:
+                payload['created_at'] = created_at
+            else:
+                payload['created_at'] = datetime.utcnow().isoformat()
+
+            doc_ref.set(payload, merge=True)
+            logger.info(f"Saved dashboard extras for {doc_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save dashboard extras: {e}")
+            return False
+
+    async def get_dashboard_extras(self, user_id: str, profile_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve dashboard extras from Firestore.
+        """
+        try:
+            doc_id = f"{user_id}_{profile_id}"
+            doc_ref = self.db.collection('astrology_dashboard_extras').document(doc_id)
+            doc = doc_ref.get()
+            if not doc.exists:
+                return None
+            return doc.to_dict() or {}
+        except Exception as e:
+            logger.error(f"Failed to get dashboard extras for {user_id}_{profile_id}: {e}")
             return None
 
 # Global service instance

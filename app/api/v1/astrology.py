@@ -12,12 +12,256 @@ from datetime import datetime, date, time
 
 from app.services.astrology_service import astrology_service
 from app.core.dependencies import get_current_user
-from app.models.astrology import AstrologyChartResponse
+from app.models.astrology import AstrologyChartResponse, HouseData, PlanetData, DashaPeriod
 from app.config.firebase import get_firestore_client
+from app.utils.astrology_utils import calculate_coordinates
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+def _build_chart_response_model(chart, user_id: str, profile_id: str) -> AstrologyChartResponse:
+    # Coerce datetimes
+    _created_at = getattr(chart, 'created_at', None)
+    _updated_at = getattr(chart, 'updated_at', None)
+    if isinstance(_created_at, str):
+        try:
+            _created_at = datetime.fromisoformat(_created_at.replace('Z', '+00:00'))
+        except Exception:
+            _created_at = datetime.utcnow()
+    if isinstance(_updated_at, str):
+        try:
+            _updated_at = datetime.fromisoformat(_updated_at.replace('Z', '+00:00'))
+        except Exception:
+            _updated_at = _created_at or datetime.utcnow()
+
+    # Coerce houses -> HouseData with PlanetData arrays
+    houses_in = getattr(chart, 'houses', {}) or {}
+    houses: Dict[str, HouseData] = {}
+
+    def _fnum(v):
+        try:
+            if v is None:
+                return None
+            if isinstance(v, (int, float)):
+                return float(v)
+            if isinstance(v, str) and v.strip() != '':
+                return float(v)
+        except Exception:
+            return None
+        return None
+
+    def _fint(v):
+        try:
+            if v is None or v == '':
+                return None
+            return int(v)
+        except Exception:
+            return None
+
+    for i in range(1, 13):
+        key = f"house_{i}"
+        raw_house = houses_in.get(key, {})
+        if isinstance(raw_house, HouseData):
+            houses[key] = raw_house
+            continue
+
+        planets_list = []
+        if isinstance(raw_house, dict):
+            raw_planets = raw_house.get('planets', [])
+        else:
+            raw_planets = []
+
+        for p in raw_planets or []:
+            if isinstance(p, PlanetData):
+                planets_list.append(p)
+            elif isinstance(p, dict):
+                planets_list.append(PlanetData(
+                    name=str(p.get('name') or p.get('planet') or ''),
+                    sign=p.get('sign') or p.get('current_sign'),
+                    degree=_fnum(p.get('degree') or p.get('fullDegree') or p.get('full_degree')),
+                    strength=_fnum(p.get('strength')),
+                    house_number=_fint(p.get('house_number') or p.get('house')),
+                    current_sign=p.get('current_sign'),
+                    fullDegree=_fnum(p.get('fullDegree') or p.get('full_degree') or p.get('degree')),
+                ))
+        houses[key] = HouseData(planets=planets_list)
+
+    # General sanitizer for nested values (BaseModel, datetime, lists, dicts)
+    def _sanitize(obj):
+        try:
+            from pydantic import BaseModel as _PBM
+        except Exception:
+            _PBM = None
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if _PBM is not None and isinstance(obj, _PBM):
+            try:
+                return obj.model_dump()
+            except Exception:
+                try:
+                    return obj.dict()
+                except Exception:
+                    return str(obj)
+        if isinstance(obj, dict):
+            return {k: _sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize(v) for v in obj]
+        return obj
+
+    birth_details = _sanitize(getattr(chart, 'birth_details', {}) or {})
+    safe_career = _sanitize(getattr(chart, 'career', {}) or {})
+    safe_finance = _sanitize(getattr(chart, 'finance', {}) or {})
+    safe_health = _sanitize(getattr(chart, 'health', {}) or {})
+    safe_travel = _sanitize(getattr(chart, 'travel', {}) or {})
+    safe_vd = _sanitize(getattr(chart, 'vimshottari_dasha', []) or [])
+
+    return AstrologyChartResponse(
+        id=f"{user_id}_{profile_id}",
+        user_id=user_id,
+        profile_id=profile_id,
+        houses=houses,
+        career=safe_career,
+        finance=safe_finance,
+        health=safe_health,
+        travel=safe_travel,
+        vimshottari_dasha=safe_vd,
+        birth_details=birth_details,
+        created_at=_created_at or datetime.utcnow(),
+        updated_at=_updated_at or datetime.utcnow(),
+    )
+
+def _build_chart_response_model(chart, user_id: str, profile_id: str) -> AstrologyChartResponse:
+    # Coerce datetimes
+    _created_at = getattr(chart, 'created_at', None)
+    _updated_at = getattr(chart, 'updated_at', None)
+    if isinstance(_created_at, str):
+        try:
+            _created_at = datetime.fromisoformat(_created_at.replace('Z', '+00:00'))
+        except Exception:
+            _created_at = datetime.utcnow()
+    if isinstance(_updated_at, str):
+        try:
+            _updated_at = datetime.fromisoformat(_updated_at.replace('Z', '+00:00'))
+        except Exception:
+            _updated_at = _created_at or datetime.utcnow()
+
+    # Coerce houses -> HouseData with PlanetData arrays
+    houses_in = getattr(chart, 'houses', {}) or {}
+    houses: Dict[str, HouseData] = {}
+
+    def _fnum(v):
+        try:
+            if v is None:
+                return None
+            if isinstance(v, (int, float)):
+                return float(v)
+            if isinstance(v, str) and v.strip() != '':
+                return float(v)
+        except Exception:
+            return None
+        return None
+
+    def _fint(v):
+        try:
+            if v is None or v == '':
+                return None
+            return int(v)
+        except Exception:
+            return None
+
+    for i in range(1, 13):
+        key = f"house_{i}"
+        raw_house = houses_in.get(key, {})
+        if isinstance(raw_house, HouseData):
+            houses[key] = raw_house
+            continue
+
+        planets_list = []
+        raw_planets = []
+        if isinstance(raw_house, dict):
+            raw_planets = raw_house.get('planets', []) or []
+
+        for p in raw_planets:
+            if isinstance(p, PlanetData):
+                planets_list.append(p)
+            elif isinstance(p, dict):
+                planets_list.append(PlanetData(
+                    name=str(p.get('name') or p.get('planet') or ''),
+                    sign=p.get('sign') or p.get('current_sign'),
+                    degree=_fnum(p.get('degree') or p.get('fullDegree') or p.get('full_degree')),
+                    strength=_fnum(p.get('strength')),
+                    house_number=_fint(p.get('house_number') or p.get('house')),
+                    current_sign=p.get('current_sign'),
+                    fullDegree=_fnum(p.get('fullDegree') or p.get('full_degree') or p.get('degree')),
+                ))
+        houses[key] = HouseData(planets=planets_list)
+
+    # General sanitizer for nested values (BaseModel, datetime, lists, dicts)
+    def _sanitize(obj):
+        try:
+            from pydantic import BaseModel as _PBM
+        except Exception:
+            _PBM = None
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if _PBM is not None and isinstance(obj, _PBM):
+            try:
+                return obj.model_dump()
+            except Exception:
+                try:
+                    return obj.dict()
+                except Exception:
+                    return str(obj)
+        if isinstance(obj, dict):
+            return {k: _sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize(v) for v in obj]
+        return obj
+
+    birth_details = _sanitize(getattr(chart, 'birth_details', {}) or {})
+    safe_career = _sanitize(getattr(chart, 'career', {}) or {})
+    safe_finance = _sanitize(getattr(chart, 'finance', {}) or {})
+    safe_health = _sanitize(getattr(chart, 'health', {}) or {})
+    safe_travel = _sanitize(getattr(chart, 'travel', {}) or {})
+
+    # Coerce vimshottari_dasha items into DashaPeriod or sanitized dicts
+    vd_raw = getattr(chart, 'vimshottari_dasha', []) or []
+    vd_list = []
+    for item in vd_raw:
+        if isinstance(item, DashaPeriod):
+            vd_list.append(item)
+        elif isinstance(item, dict):
+            try:
+                # Ensure numeric fields are proper floats
+                item_coerced = {
+                    'planet': str(item.get('planet', '')),
+                    'start_date': str(item.get('start_date', '')),
+                    'end_date': str(item.get('end_date', '')),
+                    'start_age': float(item.get('start_age')) if item.get('start_age') is not None else 0.0,
+                    'end_age': float(item.get('end_age')) if item.get('end_age') is not None else 0.0,
+                }
+                vd_list.append(DashaPeriod(**item_coerced))
+            except Exception:
+                # Fallback to sanitized dict; Pydantic will attempt parsing
+                vd_list.append(_sanitize(item))
+        else:
+            vd_list.append(_sanitize(item))
+
+    return AstrologyChartResponse(
+        id=f"{user_id}_{profile_id}",
+        user_id=user_id,
+        profile_id=profile_id,
+        houses=houses,
+        career=safe_career,
+        finance=safe_finance,
+        health=safe_health,
+        travel=safe_travel,
+        vimshottari_dasha=vd_list,
+        birth_details=birth_details,
+        created_at=_created_at or datetime.utcnow(),
+        updated_at=_updated_at or datetime.utcnow(),
+    )
 
 # Request Models
 class GenerateChartRequest(BaseModel):
@@ -141,17 +385,44 @@ async def generate_astrology_chart(
             )
 
         # Prepare birth details
+        # Normalize birth_date/time which may be stored as strings in Firestore
+        bd = profile_data.get('birth_date')
+        bt = profile_data.get('birth_time')
+
+        if isinstance(bd, str):
+            try:
+                bd = date.fromisoformat(bd)
+            except Exception:
+                bd = date.today()
+
+        if isinstance(bt, str):
+            try:
+                s = bt.strip()
+                if s and s.count(':') == 1:
+                    s = f"{s}:00"
+                bt = time.fromisoformat(s)
+            except Exception:
+                bt = time(12, 0)
+
+        # Resolve latitude/longitude from birth_place if missing
+        latitude = profile_data.get('latitude')
+        longitude = profile_data.get('longitude')
+        if latitude is None or longitude is None:
+            latlng = calculate_coordinates(profile_data.get('birth_place', '') or '')
+            latitude = latlng[0] if latlng and len(latlng) == 2 else 20.5937
+            longitude = latlng[1] if latlng and len(latlng) == 2 else 78.9629
+
         birth_details = {
-            "year": profile_data['birth_date'].year,
-            "month": profile_data['birth_date'].month,
-            "date": profile_data['birth_date'].day,
-            "hours": profile_data['birth_time'].hour,
-            "minutes": profile_data['birth_time'].minute,
-            "seconds": profile_data['birth_time'].second,
-            "latitude": profile_data.get('latitude', 20.5937),  # Default to India center
-            "longitude": profile_data.get('longitude', 78.9629),
-            "timezone": profile_data.get('timezone', 5.5),
-            "birth_datetime": datetime.combine(profile_data['birth_date'], profile_data['birth_time'])
+            "year": bd.year,
+            "month": bd.month,
+            "date": bd.day,
+            "hours": bt.hour,
+            "minutes": bt.minute,
+            "seconds": getattr(bt, 'second', 0) if hasattr(bt, 'second') else 0,
+            "latitude": latitude,
+            "longitude": longitude,
+            "timezone": profile_data.get('timezone', "Asia/Kolkata"),
+            "birth_datetime": datetime.combine(bd, bt)
         }
 
         # Generate chart in background
@@ -206,21 +477,21 @@ async def get_astrology_chart(
         if not chart:
             raise HTTPException(status_code=404, detail="Astrology chart not found. Please generate the chart first.")
 
-        # Convert to response format
-        chart_response = AstrologyChartResponse(
-            id=f"{current_user}_{profile_id}",
-            user_id=chart.user_id,
-            profile_id=chart.profile_id,
-            houses=chart.houses,
-            career=chart.career,
-            finance=chart.finance,
-            health=chart.health,
-            travel=chart.travel,
-            vimshottari_dasha=chart.vimshottari_dasha,
-            birth_details=chart.birth_details,
-            created_at=chart.created_at,
-            updated_at=chart.updated_at
-        )
+        # Convert to response format (coerce created_at/updated_at to datetime if strings)
+        _created_at = chart.created_at
+        _updated_at = chart.updated_at
+        if isinstance(_created_at, str):
+            try:
+                _created_at = datetime.fromisoformat(_created_at.replace('Z', '+00:00'))
+            except Exception:
+                _created_at = datetime.utcnow()
+        if isinstance(_updated_at, str):
+            try:
+                _updated_at = datetime.fromisoformat(_updated_at.replace('Z', '+00:00'))
+            except Exception:
+                _updated_at = _created_at
+
+        chart_response = _build_chart_response_model(chart, current_user, profile_id)
 
         return ChartDataResponse(
             chart=chart_response,
@@ -317,9 +588,308 @@ async def delete_astrology_chart(
         logger.error(f"Failed to delete astrology chart for user {current_user}: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete astrology chart")
 
-# --- Per-part chart retrieval endpoints (Rasi/Navamsa/D10/Chandra/Shadbala) ---
+# --- Generation endpoints for individual and all chart parts ---
 
 from typing import Literal
+
+@router.post("/profiles/{profile_id}/charts/{chart_type}/generate")
+async def generate_chart_part_endpoint(
+    profile_id: str,
+    chart_type: Literal["rasi", "navamsa", "d10", "chandra", "shadbala"],
+    current_user: str = Depends(get_current_user)
+):
+    """
+    Generate a single chart part (rasi, navamsa, d10, chandra, shadbala) for the given profile.
+    - Validates ownership
+    - Auto-resolves latitude/longitude from birth_place if missing
+    - Persists the generated part into astrology_chart_parts
+    """
+    try:
+        db = get_firestore_client()
+        profile_doc = db.collection('person_profiles').document(profile_id).get()
+        if not profile_doc.exists:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        profile_data = profile_doc.to_dict()
+        if profile_data.get('user_id') != current_user:
+            raise HTTPException(status_code=403, detail="Not authorized to access this profile")
+
+        # Normalize birth date/time (strings allowed)
+        bd = profile_data.get('birth_date')
+        bt = profile_data.get('birth_time')
+        if isinstance(bd, str):
+            try:
+                bd = date.fromisoformat(bd)
+            except Exception:
+                bd = date.today()
+        if isinstance(bt, str):
+            try:
+                s = bt.strip()
+                if s and s.count(':') == 1:
+                    s = f"{s}:00"
+                bt = time.fromisoformat(s)
+            except Exception:
+                bt = time(12, 0)
+
+        # Compute lat/lng from birth_place if missing
+        latitude = profile_data.get('latitude')
+        longitude = profile_data.get('longitude')
+        if latitude is None or longitude is None:
+            latlng = calculate_coordinates(profile_data.get('birth_place', '') or '')
+            latitude = latlng[0] if latlng and len(latlng) == 2 else 20.5937
+            longitude = latlng[1] if latlng and len(latlng) == 2 else 78.9629
+
+        birth_details = {
+            "year": bd.year,
+            "month": bd.month,
+            "date": bd.day,
+            "hours": bt.hour,
+            "minutes": bt.minute,
+            "seconds": getattr(bt, 'second', 0) if hasattr(bt, 'second') else 0,
+            "latitude": latitude,
+            "longitude": longitude,
+            "timezone": profile_data.get('timezone', "Asia/Kolkata"),
+            "birth_datetime": datetime.combine(bd, bt)
+        }
+
+        data = await astrology_service.generate_chart_part(current_user, profile_id, birth_details, chart_type)
+        if data is None:
+            raise HTTPException(status_code=502, detail=f"Failed to generate {chart_type} chart")
+        return {
+            "profile_id": profile_id,
+            "chart_type": chart_type,
+            "status": "generated",
+            "message": f"{chart_type} chart generated and stored"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to generate {chart_type} for {current_user}_{profile_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate {chart_type} chart")
+
+
+@router.post("/profiles/{profile_id}/charts/generate-all")
+async def generate_all_chart_parts_endpoint(
+    profile_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    Generate all chart parts and combined chart for a profile.
+    This explicitly triggers background generation and ensures lat/lng are auto-derived
+    from birth_place when missing.
+    """
+    try:
+        db = get_firestore_client()
+        profile_doc = db.collection('person_profiles').document(profile_id).get()
+        if not profile_doc.exists:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        profile_data = profile_doc.to_dict()
+        if profile_data.get('user_id') != current_user:
+            raise HTTPException(status_code=403, detail="Not authorized to access this profile")
+
+        bd = profile_data.get('birth_date')
+        bt = profile_data.get('birth_time')
+        if isinstance(bd, str):
+            try:
+                bd = date.fromisoformat(bd)
+            except Exception:
+                bd = date.today()
+        if isinstance(bt, str):
+            try:
+                s = bt.strip()
+                if s and s.count(':') == 1:
+                    s = f"{s}:00"
+                bt = time.fromisoformat(s)
+            except Exception:
+                bt = time(12, 0)
+
+        # Auto coordinates from birth_place if needed
+        latitude = profile_data.get('latitude')
+        longitude = profile_data.get('longitude')
+        if latitude is None or longitude is None:
+            latlng = calculate_coordinates(profile_data.get('birth_place', '') or '')
+            latitude = latlng[0] if latlng and len(latlng) == 2 else 20.5937
+            longitude = latlng[1] if latlng and len(latlng) == 2 else 78.9629
+
+        birth_details = {
+            "year": bd.year,
+            "month": bd.month,
+            "date": bd.day,
+            "hours": bt.hour,
+            "minutes": bt.minute,
+            "seconds": getattr(bt, 'second', 0) if hasattr(bt, 'second') else 0,
+            "latitude": latitude,
+            "longitude": longitude,
+            "timezone": profile_data.get('timezone', "Asia/Kolkata"),
+            "birth_datetime": datetime.combine(bd, bt)
+        }
+
+        background_tasks.add_task(
+            astrology_service.generate_astrology_chart,
+            current_user,
+            profile_id,
+            birth_details
+        )
+        return {"status": "processing", "message": "Chart generation started"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start generate-all for {current_user}_{profile_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to start chart generation")
+
+# --- Dashboard extras endpoints ---
+
+@router.post("/profiles/{profile_id}/dashboard-extras/generate")
+async def generate_dashboard_extras(
+    profile_id: str,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    Fetch and persist dashboard extras for a profile:
+    - planets_extended: planet name, position, sign, sign lord, house,
+      nakshatra number/name/pada, nakshatra vimsottari lord, retrograde
+    - vimsottari: maha-dasas and antar-dasas
+
+    Stored under collection 'astrology_dashboard_extras' with doc id '{user_id}_{profile_id}'.
+    """
+    try:
+        # Validate profile ownership
+        db = get_firestore_client()
+        profile_doc = db.collection('person_profiles').document(profile_id).get()
+        if not profile_doc.exists:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        profile_data = profile_doc.to_dict()
+        if profile_data.get('user_id') != current_user:
+            raise HTTPException(status_code=403, detail="Not authorized to access this profile")
+
+        # Normalize birth date/time
+        bd = profile_data.get('birth_date')
+        bt = profile_data.get('birth_time')
+        if isinstance(bd, str):
+            try:
+                bd = date.fromisoformat(bd)
+            except Exception:
+                bd = date.today()
+        if isinstance(bt, str):
+            try:
+                s = bt.strip()
+                if s and s.count(':') == 1:
+                    s = f"{s}:00"
+                bt = time.fromisoformat(s)
+            except Exception:
+                bt = time(12, 0)
+
+        # Resolve latitude/longitude from birth_place if missing
+        latitude = profile_data.get('latitude')
+        longitude = profile_data.get('longitude')
+        if latitude is None or longitude is None:
+            latlng = calculate_coordinates(profile_data.get('birth_place', '') or '')
+            latitude = latlng[0] if latlng and len(latlng) == 2 else 20.5937
+            longitude = latlng[1] if latlng and len(latlng) == 2 else 78.9629
+
+        birth_details = {
+            "year": bd.year,
+            "month": bd.month,
+            "date": bd.day,
+            "hours": bt.hour,
+            "minutes": bt.minute,
+            "seconds": getattr(bt, 'second', 0) if hasattr(bt, 'second') else 0,
+            "latitude": latitude,
+            "longitude": longitude,
+            "timezone": profile_data.get('timezone', "Asia/Kolkata"),
+            "birth_datetime": datetime.combine(bd, bt)
+        }
+
+        # Fetch upstream data via service
+        planets_extended = await astrology_service.fetch_planets_extended(birth_details)
+        vimsottari = await astrology_service.fetch_vimsottari(birth_details)
+
+        saved = await astrology_service.save_dashboard_extras(
+            current_user, profile_id, planets_extended, vimsottari
+        )
+        if not saved:
+            raise HTTPException(status_code=502, detail="Failed to save dashboard extras")
+
+        return {
+            "status": "generated",
+            "profile_id": profile_id,
+            "has_planets_extended": planets_extended is not None,
+            "has_vimsottari": vimsottari is not None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to generate dashboard extras for user {current_user}, profile {profile_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate dashboard extras")
+
+
+@router.get("/profiles/{profile_id}/dashboard-extras")
+async def get_dashboard_extras(
+    profile_id: str,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    Retrieve persisted dashboard extras for a profile.
+    Returns 404 if not generated yet.
+    """
+    try:
+        # Validate profile ownership
+        db = get_firestore_client()
+        profile_doc = db.collection('person_profiles').document(profile_id).get()
+        if not profile_doc.exists:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        profile_data = profile_doc.to_dict()
+        if profile_data.get('user_id') != current_user:
+            raise HTTPException(status_code=403, detail="Not authorized to access this profile")
+
+        extras = await astrology_service.get_dashboard_extras(current_user, profile_id)
+        if not extras:
+            raise HTTPException(status_code=404, detail="Dashboard extras not found. Generate first.")
+        return {
+            "status": "success",
+            "profile_id": profile_id,
+            "extras": extras
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get dashboard extras for user {current_user}, profile {profile_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get dashboard extras")
+
+# --- Per-part and combined chart retrieval endpoints ---
+
+# Place the 'combined' route BEFORE the dynamic '{chart_type}' route to avoid 422 from Literal mismatch
+@router.get("/profiles/{profile_id}/charts/combined")
+async def get_combined_chart_endpoint(
+    profile_id: str,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    Alias for combined chart retrieval (same as GET /chart/{profile_id}).
+    Returns the structured AstrologyChartResponse.
+    """
+    try:
+        # Validate profile ownership
+        db = get_firestore_client()
+        profile_doc = db.collection('person_profiles').document(profile_id).get()
+        if not profile_doc.exists:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        profile_data = profile_doc.to_dict()
+        if profile_data.get('user_id') != current_user:
+            raise HTTPException(status_code=403, detail="Not authorized to access this profile")
+
+        chart = await astrology_service.get_astrology_chart(current_user, profile_id)
+        if not chart:
+            raise HTTPException(status_code=404, detail="Astrology chart not found. Please generate the chart first.")
+
+        chart_response = _build_chart_response_model(chart, current_user, profile_id)
+        return {"chart": chart_response, "status": "success"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to retrieve combined chart for user {current_user}, profile {profile_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve combined chart")
+
 
 @router.get("/profiles/{profile_id}/charts/{chart_type}")
 async def get_chart_part_endpoint(
@@ -345,9 +915,10 @@ async def get_chart_part_endpoint(
 
         # Fetch chart part
         part = await astrology_service.get_chart_part(current_user, profile_id, chart_type)
-        if not part:
+        # Treat empty dict/list as valid response; only None means missing
+        if part is None:
             raise HTTPException(status_code=404, detail=f"{chart_type} chart not found. Generate the chart first.")
-
+        
         return {
             "profile_id": profile_id,
             "chart_type": chart_type,
@@ -359,48 +930,3 @@ async def get_chart_part_endpoint(
     except Exception as e:
         logger.error(f"Failed to retrieve {chart_type} chart part for user {current_user}, profile {profile_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve {chart_type} chart part")
-
-
-@router.get("/profiles/{profile_id}/charts/combined")
-async def get_combined_chart_endpoint(
-    profile_id: str,
-    current_user: str = Depends(get_current_user)
-):
-    """
-    Alias for combined chart retrieval (same as GET /chart/{profile_id}).
-    Returns the structured AstrologyChartResponse.
-    """
-    try:
-        # Validate profile ownership
-        db = get_firestore_client()
-        profile_doc = db.collection('person_profiles').document(profile_id).get()
-        if not profile_doc.exists:
-            raise HTTPException(status_code=404, detail="Profile not found")
-        profile_data = profile_doc.to_dict()
-        if profile_data.get('user_id') != current_user:
-            raise HTTPException(status_code=403, detail="Not authorized to access this profile")
-
-        chart = await astrology_service.get_astrology_chart(current_user, profile_id)
-        if not chart:
-            raise HTTPException(status_code=404, detail="Astrology chart not found. Please generate the chart first.")
-
-        chart_response = AstrologyChartResponse(
-            id=f"{current_user}_{profile_id}",
-            user_id=chart.user_id,
-            profile_id=chart.profile_id,
-            houses=chart.houses,
-            career=chart.career,
-            finance=chart.finance,
-            health=chart.health,
-            travel=chart.travel,
-            vimshottari_dasha=chart.vimshottari_dasha,
-            birth_details=chart.birth_details,
-            created_at=chart.created_at,
-            updated_at=chart.updated_at
-        )
-        return {"chart": chart_response, "status": "success"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to retrieve combined chart for user {current_user}, profile {profile_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve combined chart")

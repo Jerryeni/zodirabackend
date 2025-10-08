@@ -119,7 +119,8 @@ class EnhancedAstrologyService:
         self,
         user_id: str,
         main_profile_id: str,
-        partner_data: Dict[str, Any]
+        partner_data: Dict[str, Any],
+        main_profile_data: Optional[Dict[str, Any]] = None
     ) -> MarriageMatch:
         """
         Generate marriage compatibility analysis
@@ -135,8 +136,8 @@ class EnhancedAstrologyService:
         try:
             logger.info(f"Generating marriage match for user {user_id}, profile {main_profile_id}")
 
-            # Get main profile data
-            main_profile = await self._get_profile_data(user_id, main_profile_id)
+            # Get main profile data (prefer payload-provided data if available)
+            main_profile = main_profile_data if main_profile_data else await self._get_profile_data(user_id, main_profile_id)
             if not main_profile:
                 raise ValueError(f"Main profile {main_profile_id} not found")
 

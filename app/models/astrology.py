@@ -15,7 +15,7 @@ class PlanetData(BaseModel):
 
 class HouseData(BaseModel):
     """Model for house containing planets"""
-    planets: List[PlanetData] = []
+    planets: List[PlanetData] = Field(default_factory=list)
 
 class DashaPeriod(BaseModel):
     """Model for Vimshottari Dasha period"""
@@ -38,10 +38,10 @@ class AstrologyChart(BaseModel):
     travel: Dict[str, Any] = Field(default_factory=dict)
 
     # Dasha data
-    vimshottari_dasha: List[DashaPeriod] = []
+    vimshottari_dasha: List[DashaPeriod] = Field(default_factory=list)
 
     # Metadata
-    birth_details: Dict[str, Any] = {}
+    birth_details: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_active: bool = True
