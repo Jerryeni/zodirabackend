@@ -33,8 +33,8 @@ class AstrologyService:
             "rasi": "https://json.freeastrologyapi.com/planets",
             "navamsa": "https://json.freeastrologyapi.com/navamsa-chart-info",
             "d10": "https://json.freeastrologyapi.com/d10-chart-info",
-            "chandra": "https://json.freeastrologyapi.com/chandra-kundali-info",
-            "shadbala": "https://json.freeastrologyapi.com/shadbala/summary",
+            # "chandra": "https://json.freeastrologyapi.com/chandra-kundali-info",
+            "shadbala": "https://json.freeastrologyapi.com/shadbala/shadbala-summary",
             
             "planets_extended": "https://json.freeastrologyapi.com/planets/extended",
             "vimsottari": "https://json.freeastrologyapi.com/vimsottari/maha-dasas-and-antar-dasas"
