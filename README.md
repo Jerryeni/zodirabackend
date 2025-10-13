@@ -14,6 +14,9 @@ A comprehensive FastAPI-based backend for the ZODIRA (Cosmic Predictions) astrol
 - **📊 Comprehensive Analytics**: Firebase Analytics integration
 - **🔒 Enterprise Security**: Firebase security rules and rate limiting
 - **📱 API Documentation**: Complete OpenAPI/Swagger documentation
+- **🤖 AI-Powered Predictions**: ChatGPT integration for personalized astrology insights
+- **📈 Caching System**: Intelligent caching for astrology calculations and API responses
+- **🔄 Persistent Sessions**: Firestore-backed session management for auto-login
 
 ## 🛠️ Technology Stack
 
@@ -29,153 +32,224 @@ A comprehensive FastAPI-based backend for the ZODIRA (Cosmic Predictions) astrol
 - **Testing**: pytest with async support
 - **Containerization**: Docker ready
 - **Deployment**: Google Cloud Run
+- **AI**: OpenAI ChatGPT API for predictions
+- **Caching**: File-based caching for astrology calculations
 
 ## 📁 Project Structure
 
 ```
 zodira_backend/
-├── config/
+├── app/
 │   ├── __init__.py
-│   ├── config.py          # Environment & app configuration
-│   └── firebase_config.py # Firebase Admin SDK setup
-├── src/
-│   ├── __init__.py
-│   ├── schemas.py         # Comprehensive Pydantic models
-│   ├── i18n.py           # Internationalization support
-│   ├── firestore_schema.py # Database schema documentation
-│   ├── astrology_engine.py # Vedic astrology calculations
-│   ├── auth_utils.py     # Authentication utilities
-│   ├── payments.py       # Razorpay payment processing
-│   ├── middleware.py     # Custom middleware (metrics, etc.)
-│   └── routers/
+│   ├── main.py              # FastAPI application entry point
+│   ├── api/
+│   │   ├── __init__.py
+│   │   └── v1/
+│   │       ├── __init__.py
+│   │       ├── unified_auth.py      # Authentication endpoints
+│   │       ├── user_management.py   # User & profile management
+│   │       ├── astrology.py         # Astrology chart generation
+│   │       ├── enhanced_astrology.py # Enhanced features & predictions
+│   │       └── health.py            # Health checks
+│   ├── config/
+│   │   ├── __init__.py
+│   │   ├── settings.py        # Environment & app configuration
+│   │   └── firebase.py        # Firebase Admin SDK setup
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── security.py        # JWT, password hashing, validation
+│   │   ├── dependencies.py    # FastAPI dependencies
+│   │   ├── exceptions.py      # Custom exceptions
+│   │   ├── middleware.py      # Custom middleware
+│   │   └── security.py        # Security utilities
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── astrology.py       # Astrology data models
+│   │   ├── profile.py         # User profile models
+│   │   └── user.py            # User models
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   ├── auth.py            # Authentication schemas
+│   │   └── astrology.py       # Astrology schemas
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── user_service.py           # User management & auth
+│   │   ├── astrology_service.py      # Astrology calculations
+│   │   ├── enhanced_astrology_service.py # Enhanced features
+│   │   ├── auth_service.py           # Authentication service
+│   │   ├── firebase_email_service.py # Email service
+│   │   ├── chatgpt_service.py        # AI predictions
+│   │   └── user_service.py           # User management
+│   └── utils/
 │       ├── __init__.py
-│       ├── auth.py        # Multi-provider authentication
-│       ├── users.py       # User & profile management
-│       ├── marriage_matching.py # 36 Guna compatibility
-│       ├── predictions.py # Astrology predictions
-│       ├── astrologers.py # Astrologer management
-│       ├── consultations.py # Consultation booking
-│       ├── payments.py    # Payment processing
-│       └── health.py      # Health checks & metrics
-├── firebase-setup.sh     # Automated Firebase setup
-├── firestore.rules       # Firestore security rules
-├── storage.rules         # Storage security rules
-├── FIREBASE_SETUP.md     # Detailed Firebase setup guide
-├── Dockerfile           # Container configuration
-├── main.py              # FastAPI application
-├── requirements.txt     # Python dependencies
-├── .env                 # Environment variables
-├── tests/               # Comprehensive test suite
-├── docs/                # API documentation
-└── README.md
+│       ├── astrology_utils.py  # Astrology utilities
+│       └── firebase_utils.py   # Firebase utilities
+├── cache/
+│   └── astrology/             # Cached astrology calculations
+├── tests/
+│   ├── __init__.py
+│   ├── test_health.py         # Health endpoint tests
+│   └── test_unified_auth.py   # Authentication tests
+├── docker-compose.yml         # Docker Compose configuration
+├── Dockerfile                 # Container configuration
+├── requirements.txt           # Python dependencies
+├── firebase.json              # Firebase configuration
+├── firestore.rules            # Firestore security rules
+├── storage.rules              # Storage security rules
+├── .env.example               # Environment variables template
+├── .env                       # Environment variables (gitignored)
+├── .gitignore                 # Git ignore rules
+├── app.log                    # Application logs
+└── README.md                  # This file
 ```
 
 ## 🚀 Installation & Setup
 
-### 1. Prerequisites
-- Python 3.8+
-- Google Cloud SDK (`gcloud`)
+### Prerequisites
+- Python 3.11+ (recommended)
+- Google Cloud SDK (`gcloud`) - for Firebase deployment
 - Git
+- Docker (optional, for containerized deployment)
 
-### 2. Clone and Setup
+### Quick Start (Local Development)
+
+1. **Clone the repository**
 ```bash
 git clone <repository-url>
 cd zodira_backend
+```
 
+2. **Set up Python environment**
+```bash
 # Create virtual environment
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Activate environment
+source venv/bin/activate  # Linux/macOS
+# OR
+venv\Scripts\activate     # Windows
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Firebase Project Setup
-Choose one of the following methods:
-
-#### Option A: Automated Setup (Recommended)
+3. **Configure environment variables**
 ```bash
+# Copy template
+cp .env.example .env
+
+# Edit .env with your configuration (see Environment Variables section below)
+```
+
+4. **Run the application**
+```bash
+# Development mode with auto-reload
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# OR using the main.py script
+python app/main.py
+```
+
+5. **Verify installation**
+```bash
+# Check health endpoint
+curl http://localhost:8000/api/v1/health
+
+# View API documentation
+open http://localhost:8000/docs
+```
+
+### Firebase Setup
+
+#### Automated Setup (Recommended)
+```bash
+# Make setup script executable and run
 chmod +x firebase-setup.sh
 ./firebase-setup.sh
 ```
 
-#### Option B: Manual Setup
-Follow the detailed guide in [`FIREBASE_SETUP.md`](FIREBASE_SETUP.md)
+#### Manual Setup
+1. Create a Firebase project at https://console.firebase.google.com/
+2. Enable Authentication with Email/Password, Phone, and Google providers
+3. Enable Firestore Database
+4. Enable Cloud Storage
+5. Generate a service account key and download the JSON file
+6. Deploy security rules:
+   - Upload `firestore.rules` to Firestore → Rules
+   - Upload `storage.rules` to Storage → Rules
 
-### 4. Environment Configuration
-Update `.env` file with your Firebase and payment credentials:
+### Docker Deployment
+
+#### Local Docker Development
+```bash
+# Build and run with Docker Compose
+docker-compose up --build
+
+# OR build and run manually
+docker build -t zodira-backend .
+docker run -p 8000:8000 --env-file .env zodira-backend
+```
+
+#### Production Deployment
+```bash
+# Build for production
+docker build -t zodira-backend:prod -f Dockerfile.prod .
+
+# Run in production mode
+docker run -d -p 8000:8000 --env-file .env.prod zodira-backend:prod
+```
+
+### Environment Configuration
+
+The application uses the following environment variables (see `.env.example` for template):
+
+#### Required Variables
 ```env
-# Firebase Configuration
-FIREBASE_SERVICE_ACCOUNT_KEY_PATH=config/serviceAccountKey.json
-FIREBASE_PROJECT_ID=your-project-id
+# Application
+ENVIRONMENT=production
+SECRET_KEY=your-secure-secret-key-here
+
+# Firebase (Required)
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_CLIENT_EMAIL=firebase-service-account@your-project.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY_ID=your-private-key-id
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY_HERE\n-----END PRIVATE KEY-----\n"
 FIREBASE_STORAGE_BUCKET=your-project-id.appspot.com
-
-# Razorpay Configuration
-RAZORPAY_KEY_ID=your_razorpay_key_id
-RAZORPAY_KEY_SECRET=your_razorpay_key_secret
 ```
 
-### 5. Deploy Security Rules
-Upload `firestore.rules` and `storage.rules` to your Firebase Console:
-- **Firestore**: Console → Firestore Database → Rules
-- **Storage**: Console → Storage → Rules
+#### Optional Variables
+```env
+# Authentication
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+REDIRECT_URI=https://your-domain.com/auth/google/callback
 
-## Running the Application
+# SMS/Email Services
+MYDREAMS_API_KEY=your-sms-api-key
+FIREBASE_EMAIL_USER=your-email@gmail.com
+FIREBASE_EMAIL_PASSWORD=your-app-password
 
-### Development
-```bash
-python main.py
+# AI Features
+OPENAI_API_KEY=your-openai-api-key
+
+# Payment Processing
+RAZORPAY_KEY_ID=your-razorpay-key
+RAZORPAY_KEY_SECRET=your-razorpay-secret
+
+# Rate Limiting & Security
+RATE_LIMIT_REQUESTS=100
+RATE_LIMIT_WINDOW=60
+ALLOWED_ORIGINS=https://your-frontend-domain.com
 ```
 
-The API will be available at `http://localhost:8000`
+### Architecture Notes
 
-### With Uvicorn
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Local development (no Docker)
-
-Follow these steps to run the backend natively on your machine without Docker:
-
-1) Python environment
-- macOS/Linux:
-  - python3 -m venv venv
-  - source venv/bin/activate
-- Windows (PowerShell):
-  - py -m venv venv
-  - .\venv\Scripts\Activate.ps1
-
-2) Install dependencies
-- pip install -r requirements.txt
-
-3) Configure environment
-- cp .env.example .env
-- Open .env and fill in required variables. Minimum to boot and hit Firestore:
-  - FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY_ID, FIREBASE_PRIVATE_KEY, FIREBASE_STORAGE_BUCKET
-  - SECRET_KEY
-- Optional (for full functionality):
-  - FIREBASE_CLIENT_ID (optional; not required by this backend. If present it is embedded in Admin SDK init but unused elsewhere)
-  - SMTP (FIREBASE_SMTP_*): for email OTP delivery
-  - MyDreams SMS (MYDREAMS_*): for SMS OTP delivery
-  - GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI: for Google OAuth (Option A only needs GOOGLE_CLIENT_ID)
-  - OPENAI_API_KEY: for enhanced AI features
-
-4) Run the server
-- uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-5) Verify
-- Health: http://localhost:8000/api/v1/health
-- Docs: http://localhost:8000/docs
-- Auth:
-  - POST /api/v1/auth/initiate
-  - POST /api/v1/auth/verify-otp
-  - GET /api/v1/auth/google/login
-  - GET /api/v1/auth/google/callback (requires valid GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI)
-
-Notes:
-- The Firebase Admin SDK is initialized from env in app/config/firebase.py; the private key requires literal \n escapes in .env which are converted at runtime.
-- If SMTP/SMS aren’t set, OTP sessions still persist in Firestore, but real delivery won’t occur.
+- **Session Management**: Uses Firestore for persistent sessions (no Redis required)
+- **Rate Limiting**: Firestore-based fixed-window rate limiting
+- **Caching**: File-based caching for astrology calculations in `cache/astrology/`
+- **Authentication**: JWT tokens with Firebase Auth integration
+- **Database**: Firebase Firestore with security rules
+- **Storage**: Firebase Cloud Storage for user files
 ## API Documentation
 
 Once running, visit `http://localhost:8000/docs` for interactive Swagger UI documentation.
@@ -235,91 +309,308 @@ Once running, visit `http://localhost:8000/docs` for interactive Swagger UI docu
 - `GET /api/v1/payments/history` - Payment history
 - `POST /api/v1/payments/refund/{payment_id}` - Request refund
 
-## Testing
+## 🧪 Testing
 
-Run tests with pytest:
+### Running Tests
 ```bash
+# Run all tests
 pytest
+
+# Run with coverage report
+pytest --cov=app --cov-report=html
+
+# Run specific test file
+pytest tests/test_health.py
+
+# Run tests with verbose output
+pytest -v
 ```
 
-Run with coverage:
-```bash
-pytest --cov=src --cov-report=html
+### Test Structure
+- **Unit Tests**: Test individual functions and services
+- **Integration Tests**: Test API endpoints and database interactions
+- **Authentication Tests**: Verify auth flows and security
+- **Astrology Tests**: Test astrology calculations and caching
+
+### Writing Tests
+```python
+# Example test structure
+import pytest
+from app.services.user_service import user_service
+
+def test_user_creation():
+    # Test user creation logic
+    pass
+
+def test_astrology_calculation():
+    # Test astrology calculation accuracy
+    pass
 ```
 
-## Environment Variables
+## 🔧 Environment Variables
 
+### Complete Configuration Reference
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ENVIRONMENT` | Application environment | No | `development` |
+| `SECRET_KEY` | JWT signing key (32+ chars) | Yes | - |
+| `APP_DEBUG` | Enable debug mode | No | `false` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT expiration time | No | `43200` |
+
+### Firebase Configuration
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `FIREBASE_SERVICE_ACCOUNT_KEY_PATH` | Path to Firebase service account JSON | Yes |
 | `FIREBASE_PROJECT_ID` | Firebase project ID | Yes |
-| `FIREBASE_STORAGE_BUCKET` | Firebase storage bucket | Yes |
+| `FIREBASE_CLIENT_EMAIL` | Service account email | Yes |
+| `FIREBASE_PRIVATE_KEY_ID` | Private key ID | Yes |
+| `FIREBASE_PRIVATE_KEY` | Private key (with \n literals) | Yes |
+| `FIREBASE_STORAGE_BUCKET` | Cloud Storage bucket | Yes |
 
-## Deployment
+### Authentication & OAuth
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID | No |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | No |
+| `REDIRECT_URI` | OAuth redirect URI | No |
 
-### Docker (Planned)
+### External Services
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `OPENAI_API_KEY` | OpenAI API key for predictions | No |
+| `MYDREAMS_API_KEY` | SMS service API key | No |
+| `RAZORPAY_KEY_ID` | Payment gateway key | No |
+| `RAZORPAY_KEY_SECRET` | Payment gateway secret | No |
+
+### Security & Performance
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ALLOWED_ORIGINS` | CORS allowed origins | No | `*` |
+| `RATE_LIMIT_REQUESTS` | Requests per window | No | `100` |
+| `RATE_LIMIT_WINDOW` | Rate limit window (seconds) | No | `60` |
+| `LOG_LEVEL` | Logging level | No | `INFO` |
+
+## 🚀 Deployment
+
+### Production Deployment Options
+
+#### 1. Google Cloud Run (Recommended)
 ```bash
-docker build -t zodira-backend .
-docker run -p 8000:8000 zodira-backend
+# Build and deploy to Cloud Run
+gcloud run deploy zodira-backend \
+  --source . \
+  --platform managed \
+  --region asia-east1 \
+  --allow-unauthenticated \
+  --set-env-vars="ENVIRONMENT=production" \
+  --memory=1Gi \
+  --cpu=1
+```
+
+#### 2. Docker Container
+```bash
+# Build production image
+docker build -t zodira-backend:prod .
+
+# Run with production environment
+docker run -d \
+  --name zodira-backend \
+  -p 8000:8000 \
+  --env-file .env.prod \
+  --restart unless-stopped \
+  zodira-backend:prod
+```
+
+#### 3. Kubernetes Deployment
+```yaml
+# kubernetes/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zodira-backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: zodira-backend
+    template:
+      metadata:
+        labels:
+          app: zodira-backend
+      spec:
+        containers:
+        - name: zodira-backend
+          image: zodira-backend:prod
+          ports:
+          - containerPort: 8000
+          envFrom:
+          - configMapRef:
+              name: zodira-config
+          - secretRef:
+              name: zodira-secrets
 ```
 
 ### Production Considerations
-- Set specific CORS origins instead of `*`
-- Use environment-specific configuration
-- Implement proper logging and monitoring
-- Set up CI/CD pipelines
-- Configure Firebase security rules
 
-## Contributing
+#### Security
+- **Environment Variables**: Never commit secrets to version control
+- **CORS**: Set specific origins instead of `*` in production
+- **HTTPS**: Always use HTTPS in production
+- **Secrets Management**: Use Google Cloud Secret Manager or similar
 
-1. Fork the repository
-2. Create a feature branch
-3. Make changes with tests
-4. Submit a pull request
+#### Performance
+- **Caching**: Astrology calculations are cached for performance
+- **Rate Limiting**: Configurable rate limits prevent abuse
+- **Database**: Firestore scales automatically
+- **Monitoring**: Prometheus metrics available at `/metrics`
 
-## License
+#### Monitoring & Observability
+```bash
+# Health checks
+curl https://your-domain.com/api/v1/health
 
-[Add license information]
+# Metrics endpoint
+curl https://your-domain.com/metrics
 
-## Deployment
+# Application logs
+docker logs zodira-backend
+```
 
-### Production Setup
+## 🔒 Security
 
-1. **Firebase Configuration**:
-   - Set up your Firebase project
-   - Download the service account key JSON file
-   - Upload `firestore.rules` to your Firebase project
-   - Enable Authentication and Firestore
+### Authentication & Authorization
+- **JWT Tokens**: Short-lived access tokens with secure signing
+- **Firebase Auth**: Integration with Google, email, and phone authentication
+- **Session Management**: Firestore-backed persistent sessions
+- **Rate Limiting**: Fixed-window rate limiting on authentication endpoints
 
-2. **Environment Variables**:
-   Set the following on your production server:
-   ```
-   FIREBASE_SERVICE_ACCOUNT_KEY_PATH=/path/to/serviceAccountKey.json
-   FIREBASE_PROJECT_ID=your-project-id
-   FIREBASE_STORAGE_BUCKET=your-project-id.appspot.com
-   ```
+### Data Protection
+- **Encryption**: All data encrypted in transit and at rest
+- **Input Validation**: Comprehensive Pydantic validation
+- **SQL Injection Prevention**: No SQL queries (Firestore)
+- **XSS Protection**: Input sanitization and validation
 
-3. **Docker Deployment**:
+### Firebase Security Rules
+```javascript
+// firestore.rules - Key security rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can only access their own data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Profiles are user-specific
+    match /person_profiles/{profileId} {
+      allow read, write: if request.auth != null &&
+        resource.data.user_id == request.auth.uid;
+    }
+  }
+}
+```
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+#### 1. Firebase Connection Issues
+```bash
+# Check Firebase configuration
+curl http://localhost:8000/api/v1/health
+
+# Verify environment variables
+echo $FIREBASE_PROJECT_ID
+echo $FIREBASE_CLIENT_EMAIL
+```
+
+#### 2. Astrology API Failures
+```bash
+# Check cache directory permissions
+ls -la cache/astrology/
+
+# Verify API key configuration
+echo $FREE_ASTRO_API_KEY
+```
+
+#### 3. Authentication Problems
+```bash
+# Test authentication endpoint
+curl -X POST http://localhost:8000/api/v1/auth/health
+
+# Check JWT token validity
+curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8000/api/v1/health
+```
+
+#### 4. Docker Issues
+```bash
+# Check container logs
+docker logs zodira-backend
+
+# Verify environment file
+docker exec zodira-backend env | grep FIREBASE
+```
+
+### Debug Mode
+Enable debug logging:
+```env
+APP_DEBUG=true
+LOG_LEVEL=DEBUG
+```
+
+### Performance Issues
+- Check cache hit rates in application logs
+- Monitor Firestore usage in Firebase Console
+- Review rate limiting configurations
+
+## 🤝 Contributing
+
+### Development Workflow
+1. **Fork the repository**
+2. **Create a feature branch**
    ```bash
-   docker build -t zodira-backend .
-   docker run -d -p 8000:8000 --env-file .env zodira-backend
+   git checkout -b feature/your-feature-name
    ```
+3. **Make changes with tests**
+4. **Run tests and linting**
+   ```bash
+   pytest
+   black app/
+   flake8 app/
+   ```
+5. **Submit a pull request**
 
-4. **Monitoring**:
-   - Metrics available at `/metrics` for Prometheus
-   - Health check at `/api/v1/health`
+### Code Standards
+- **Python**: Follow PEP 8 style guidelines
+- **Documentation**: Add docstrings to all functions
+- **Testing**: Write tests for new features
+- **Commits**: Use conventional commit messages
 
-Note: Firebase handles database and authentication, so no additional services needed in docker-compose.
+### Branch Naming
+- `feature/feature-name`: New features
+- `bugfix/bug-description`: Bug fixes
+- `hotfix/critical-fix`: Critical fixes
+- `docs/documentation`: Documentation updates
 
-## Security
+## 📄 License
 
-- Rate limiting implemented with slowapi
-- Firebase Security Rules enforce data access control
-- All endpoints require authentication except health and auth routes
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Support
+## 📞 Support
 
-For questions or issues, please [add contact information]
+### Contact Information
+- **Email**: support@zodira.app
+- **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
+- **Documentation**: [API Docs](http://localhost:8000/docs)
+
+### Community
+- **Discord**: Join our community server
+- **Forum**: Community discussion forum
+- **Newsletter**: Subscribe for updates
+
+---
+
+**Built with ❤️ for the ZODIRA astrology community**
 # Backend API Specification and Implementation Guide
 
 Audience: Flutter developers integrating the ZODIRA backend  
